@@ -3,6 +3,7 @@ package dev.rortega.orchardnotes.notes
 import dev.rortega.orchardnotes.notes.doc.FormatParagraph
 import dev.rortega.orchardnotes.notes.doc.InlineSpan
 import dev.rortega.orchardnotes.notes.doc.InlineStyle
+import dev.rortega.orchardnotes.notes.doc.NoteFormat
 import dev.rortega.orchardnotes.notes.doc.ParagraphKind
 
 /**
@@ -25,7 +26,9 @@ object LiveMerge {
     fun merge(base: List<FormatParagraph>, ours: List<FormatParagraph>, theirs: List<FormatParagraph>): Result {
         val b = Flat.of(base)
         val o = Flat.of(ours)
-        val t = Flat.of(theirs)
+        // Theirs is usually a stored version, which can't keep an empty last line's style:
+        // losing it there isn't a change (an item just started at the end of a list stays).
+        val t = Flat.of(NoteFormat.keepEmptyLastLineStyle(from = base, onto = theirs))
         val toOurs = Alignment.align(b.text, o.text)
         val toTheirs = Alignment.align(b.text, t.text)
         val oursInserts = insertionsByGap(toOurs, o.text.length, b.text.length)

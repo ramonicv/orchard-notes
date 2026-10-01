@@ -98,6 +98,17 @@ class NoteFormatTest {
     }
 
     @Test
+    fun anEmptyLastLinesStyleCantBeStoredSoItDoesntCount() {
+        val saved = ok(NoteFormat.decode("milk\n", listOf(run(5, 103))))
+        assertEquals(ParagraphKind.Body, saved.last().kind)
+        val edited = listOf(paragraph("milk", ParagraphKind.Checklist), paragraph("", ParagraphKind.Checklist))
+        assertTrue(NoteFormat.formatsEqual(saved, edited))
+        // Anywhere else, or once the line has text, it does.
+        assertFalse(NoteFormat.formatsEqual(listOf(paragraph(""), paragraph("x")), listOf(paragraph("", ParagraphKind.Checklist), paragraph("x"))))
+        assertFalse(NoteFormat.formatsEqual(listOf(paragraph("x")), listOf(paragraph("x", ParagraphKind.Checklist))))
+    }
+
+    @Test
     fun realFormattedFixtureDecodes() {
         val content = NoteContent.decode(dev.rortega.orchardnotes.notes.Fixtures.compressed(dev.rortega.orchardnotes.notes.Fixtures.FORMATTED_MULTI_EDIT))
         val paragraphs = ok(content.format())

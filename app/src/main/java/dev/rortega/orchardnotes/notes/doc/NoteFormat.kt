@@ -227,8 +227,26 @@ object NoteFormat {
         return mergeSpans(a.spans) == mergeSpans(b.spans)
     }
 
+    /**
+     * Whether two notes agree on everything a note can store. An empty last line can't store
+     * a paragraph style (it has neither a newline nor a last character to carry one), so its
+     * style doesn't count: a list item just started at the end of a note saves as an empty line.
+     */
     fun formatsEqual(a: List<FormatParagraph>, b: List<FormatParagraph>): Boolean =
-        a.size == b.size && a.indices.all { paragraphsEqual(a[it], b[it], a.getOrNull(it - 1), b.getOrNull(it - 1)) }
+        a.size == b.size && a.indices.all { i ->
+            (i == a.lastIndex && a[i].text.isEmpty() && b[i].text.isEmpty()) ||
+                paragraphsEqual(a[i], b[i], a.getOrNull(i - 1), b.getOrNull(i - 1))
+        }
+
+    /**
+     * [onto], with [from]'s style on its empty last line when both end with one. A stored
+     * version has lost that style (see [formatsEqual]); this reads that as unchanged.
+     */
+    fun keepEmptyLastLineStyle(from: List<FormatParagraph>, onto: List<FormatParagraph>): List<FormatParagraph> {
+        val style = from.lastOrNull()?.takeIf { it.text.isEmpty() } ?: return onto
+        val last = onto.lastOrNull()?.takeIf { it.text.isEmpty() } ?: return onto
+        return onto.dropLast(1) + style.copy(start = last.start)
+    }
 
     fun effectiveStart(startNumber: Int): Int = if (startNumber == 0) 1 else startNumber
 }
