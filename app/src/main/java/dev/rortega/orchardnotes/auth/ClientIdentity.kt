@@ -60,9 +60,8 @@ class ClientIdentity(private val prefs: SharedPreferences) : ClientParams {
         const val DEFAULT_CLIENT_MASTERING_NUMBER = "2624Build27"
 
         /**
-         * Desktop Safari, the browser www.icloud.com is built for. Presented as mobile Chrome
-         * (the WebView's own User-Agent minus its WebView markers), the sign-in page showed
-         * iCloud's loading header and then went blank. The page is still laid out at the
+         * Desktop Safari, the browser www.icloud.com is built for, and the identity other apps
+         * use to host iCloud's sign-in in an Android WebView. The page is still laid out at the
          * WebView's width, so it fits the phone.
          */
         const val USER_AGENT =

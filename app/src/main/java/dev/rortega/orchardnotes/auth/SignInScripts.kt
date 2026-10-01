@@ -104,4 +104,53 @@ internal object SignInScripts {
           }
         })();
     """.trimIndent()
+
+    /**
+     * Run on demand for the troubleshooting report: a plain-text description of what the
+     * page currently shows (address, text, frames, what covers the middle of the screen,
+     * which browser APIs are missing), to tell a blank page from one that failed to draw.
+     */
+    val PAGE_SNAPSHOT = """
+        (function () {
+          function describe(el) {
+            if (!el) return 'nothing';
+            var name = el.tagName.toLowerCase();
+            if (el.id) name += '#' + el.id;
+            if (typeof el.className === 'string' && el.className.trim()) {
+              name += '.' + el.className.trim().split(/\s+/).slice(0, 3).join('.');
+            }
+            var style = getComputedStyle(el);
+            return name + ' (background ' + style.backgroundColor + ', opacity ' + style.opacity + ')';
+          }
+          try {
+            var body = document.body;
+            var text = body ? (body.innerText || '').replace(/\s+/g, ' ').trim() : '';
+            var frames = Array.prototype.map.call(document.querySelectorAll('iframe'), function (frame) {
+              var box = frame.getBoundingClientRect();
+              return '  ' + (frame.src || '(no src)').split(/[?#]/)[0] + ' ' + Math.round(box.width) + 'x' + Math.round(box.height);
+            });
+            var missing = ['fetch', 'Promise', 'ResizeObserver', 'IntersectionObserver', 'structuredClone', 'indexedDB',
+              'BroadcastChannel', 'SharedWorker', 'Notification', 'PublicKeyCredential'].filter(function (name) {
+              return typeof window[name] === 'undefined';
+            });
+            var bodyStyle = body ? getComputedStyle(body) : null;
+            return [
+              'url: ' + location.href.split(/[?#]/)[0],
+              'ready: ' + document.readyState + ', elements: ' + document.getElementsByTagName('*').length,
+              'viewport: ' + innerWidth + 'x' + innerHeight + ' at ' + devicePixelRatio + 'x, dark mode: ' +
+                matchMedia('(prefers-color-scheme: dark)').matches,
+              'body: ' + (bodyStyle ? body.scrollWidth + 'x' + body.scrollHeight + ', display ' + bodyStyle.display +
+                ', visibility ' + bodyStyle.visibility + ', opacity ' + bodyStyle.opacity : 'none'),
+              'middle of screen: ' + describe(document.elementFromPoint(innerWidth / 2, innerHeight / 2)),
+              'text (' + text.length + ' chars): ' + text.slice(0, 200),
+              'frames: ' + frames.length
+            ].concat(frames, [
+              'missing APIs: ' + (missing.join(', ') || 'none'),
+              'user agent: ' + navigator.userAgent
+            ]).join('\n');
+          } catch (e) {
+            return 'snapshot failed: ' + e;
+          }
+        })();
+    """.trimIndent()
 }

@@ -47,7 +47,7 @@ To install on a phone: enable *Developer options* (Settings > About phone > Soft
 
 | Layer | Where | What it does |
 |---|---|---|
-| Sign-in | `auth/`, `ui/signin/` | Hosts www.icloud.com in a WebView that identifies as desktop Safari (the page goes blank when presented as mobile Chrome). A script injected only into that origin reads the web client's own `accountLogin` / `validate` responses to detect a completed sign-in (2FA included). The WebView cookie store is shared with the HTTP client. |
+| Sign-in | `auth/`, `ui/signin/` | Hosts www.icloud.com in a WebView that identifies as desktop Safari. A script injected only into that origin reads the web client's own `accountLogin` / `validate` responses to detect a completed sign-in (2FA included). The WebView cookie store is shared with the HTTP client. |
 | CloudKit | `cloudkit/` | `changes/zone`, `records/lookup` and `records/modify` on the `com.apple.notes` container, with the same parameters as the web client. |
 | Cache and sync | `data/` | Room cache of notes and folders, incremental sync tokens, pending edits and operations, and the push pipeline (`NoteWriter`). |
 | Note format | `notes/` | Order-preserving protobuf codec; Apple's `topotext` CRDT model, edit engine, formatting reconciler; record field builders; paragraph-level three-way merge. |
@@ -63,6 +63,8 @@ Every write to an existing note goes through these gates: fetch a fresh copy, re
 - Notes that other people shared with you aren't listed (they live in a separate shared database). Notes you shared with others are listed and editable.
 - Pinning, renaming or deleting folders, and hashtags/mentions as tokens aren't supported yet.
 - Very large notes whose text is stored as a separate asset are read-only.
+
+If the iCloud sign-in page doesn't load, the sign-in screen's ⋮ menu has *Troubleshooting info*: what the page loaded, any errors it reported, and what it shows right now, ready to share.
 
 ## Development
 
