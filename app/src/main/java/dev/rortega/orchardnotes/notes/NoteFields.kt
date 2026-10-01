@@ -2,6 +2,7 @@ package dev.rortega.orchardnotes.notes
 
 import dev.rortega.orchardnotes.cloudkit.CkRecord
 import dev.rortega.orchardnotes.cloudkit.CloudKitClient
+import dev.rortega.orchardnotes.cloudkit.NotesZone
 import dev.rortega.orchardnotes.data.SpecialFolders
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -34,9 +35,12 @@ object NoteFields {
         return snippet.ifEmpty { EMPTY_SNIPPET }
     }
 
-    /** Fields for a brand-new note's `create` (the captured first save). */
-    fun create(textDataBase64: String, text: String, nowMs: Long, folderRecordName: String): JsonObject {
-        val folder = CloudKitClient.reference(folderRecordName)
+    /**
+     * Fields for a brand-new note's `create` (the captured first save). In a sharer's zone
+     * the folder references name that zone (the captured shared-note create).
+     */
+    fun create(textDataBase64: String, text: String, nowMs: Long, folderRecordName: String, zone: NotesZone = NotesZone.Private): JsonObject {
+        val folder = CloudKitClient.reference(folderRecordName, zone)
         return buildJsonObject {
             put("CreationDate", value(JsonPrimitive(nowMs)))
             put("Folders", value(JsonArray(listOf(folder))))
@@ -87,7 +91,14 @@ object NoteFields {
         if (parentRecordName != null) put("ParentFolder", value(CloudKitClient.reference(parentRecordName)))
     }
 
-    fun createOperation(recordType: String, recordName: String, fields: JsonObject, parent: String? = null): JsonObject = buildJsonObject {
+    /** [createShortGuid]: asked for by the captured create of a note in a shared folder. */
+    fun createOperation(
+        recordType: String,
+        recordName: String,
+        fields: JsonObject,
+        parent: String? = null,
+        createShortGuid: Boolean = false,
+    ): JsonObject = buildJsonObject {
         put("operationType", "create")
         put(
             "record",
@@ -96,6 +107,7 @@ object NoteFields {
                 put("recordType", recordType)
                 put("fields", fields)
                 if (parent != null) put("parent", buildJsonObject { put("recordName", parent) })
+                if (createShortGuid) put("createShortGUID", true)
             },
         )
     }

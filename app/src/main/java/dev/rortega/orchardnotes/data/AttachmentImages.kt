@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.util.LruCache
 import dev.rortega.orchardnotes.cloudkit.CkRecord
 import dev.rortega.orchardnotes.cloudkit.CloudKitClient
+import dev.rortega.orchardnotes.cloudkit.NotesZone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -35,8 +36,11 @@ class AttachmentImages(
     }
     private val locks = mutableMapOf<String, Mutex>()
 
-    /** The attachment's image scaled to at most [maxWidthPx] wide, or null if it has none. */
-    suspend fun load(identifier: String, maxWidthPx: Int): Bitmap? {
+    /**
+     * The attachment's image scaled to at most [maxWidthPx] wide, or null if it has none.
+     * [zone] is the zone of the note it's in (a shared note's attachments are in its sharer's).
+     */
+    suspend fun load(identifier: String, maxWidthPx: Int, zone: NotesZone = NotesZone.Private): Bitmap? {
         val key = "$identifier@$maxWidthPx"
         memory.get(key)?.let { return it }
         val lock = synchronized(locks) { locks.getOrPut(identifier) { Mutex() } }
@@ -44,7 +48,7 @@ class AttachmentImages(
             memory.get(key) ?: withContext(Dispatchers.IO) {
                 val file = File(cacheDir, cacheName(identifier))
                 if (!file.exists()) {
-                    val bytes = fetch(identifier) ?: return@withContext null
+                    val bytes = fetch(identifier, zone) ?: return@withContext null
                     cacheDir.mkdirs()
                     file.writeBytes(bytes)
                 }
@@ -58,18 +62,18 @@ class AttachmentImages(
         cacheDir.deleteRecursively()
     }
 
-    private suspend fun fetch(identifier: String): ByteArray? {
-        val attachment = cloudKit.lookup(identifier) ?: return null
-        for (url in candidateUrls(attachment)) {
+    private suspend fun fetch(identifier: String, zone: NotesZone): ByteArray? {
+        val attachment = cloudKit.lookup(identifier, zone) ?: return null
+        for (url in candidateUrls(attachment, zone)) {
             val bytes = runCatching { cloudKit.download(url) }.getOrNull()
             if (bytes != null && bytes.isNotEmpty()) return bytes
         }
         return null
     }
 
-    private suspend fun candidateUrls(attachment: CkRecord): List<String> = buildList {
+    private suspend fun candidateUrls(attachment: CkRecord, zone: NotesZone): List<String> = buildList {
         attachment.reference("Media")?.let { media ->
-            cloudKit.lookup(media)?.let { record -> assetUrl(record.value("Asset"))?.let(::add) }
+            cloudKit.lookup(media, zone)?.let { record -> assetUrl(record.value("Asset"))?.let(::add) }
         }
         listOf("PrimaryAsset", "FallbackImage").forEach { field -> assetUrl(attachment.value(field))?.let(::add) }
         (attachment.value("PreviewImages") as? JsonArray)?.firstNotNullOfOrNull(::assetUrl)?.let(::add)

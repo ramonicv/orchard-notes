@@ -7,11 +7,30 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [NoteEntity::class, FolderEntity::class, PendingEditEntity::class, PendingOpEntity::class], version = 3, exportSchema = true)
+@Database(
+    entities = [NoteEntity::class, FolderEntity::class, PendingEditEntity::class, PendingOpEntity::class, ShareEntity::class],
+    version = 4,
+    exportSchema = true,
+)
 abstract class NotesDatabase : RoomDatabase() {
     abstract fun notesDao(): NotesDao
 
     companion object {
+        /** Shared notes: which zone notes and folders come from, and the shares themselves. */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `notes` ADD COLUMN `zoneOwner` TEXT")
+                db.execSQL("ALTER TABLE `notes` ADD COLUMN `shareRecordName` TEXT")
+                db.execSQL("ALTER TABLE `notes` ADD COLUMN `syncedAt` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `folders` ADD COLUMN `zoneOwner` TEXT")
+                db.execSQL("ALTER TABLE `folders` ADD COLUMN `shareRecordName` TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `shares` (`recordName` TEXT NOT NULL, `zoneOwner` TEXT, `ownerName` TEXT, " +
+                        "`permission` TEXT, `participantNames` TEXT NOT NULL, PRIMARY KEY(`recordName`))",
+                )
+            }
+        }
+
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -35,7 +54,7 @@ abstract class NotesDatabase : RoomDatabase() {
 
         fun create(context: Context): NotesDatabase =
             Room.databaseBuilder(context, NotesDatabase::class.java, "notes.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

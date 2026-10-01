@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.rortega.orchardnotes.data.NoteSummary
 import dev.rortega.orchardnotes.data.NotesRepository
+import dev.rortega.orchardnotes.data.SharingIndex
+import dev.rortega.orchardnotes.data.SharingInfo
 import dev.rortega.orchardnotes.data.SpecialFolders
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -18,7 +20,13 @@ import kotlinx.coroutines.flow.stateIn
 import java.time.LocalDate
 import java.util.UUID
 
-data class NoteRow(val summary: NoteSummary, val dateLabel: String, val folderTitle: String?)
+data class NoteRow(
+    val summary: NoteSummary,
+    val dateLabel: String,
+    val folderTitle: String?,
+    /** How the note is shared; null when it isn't. */
+    val sharing: SharingInfo? = null,
+)
 
 data class NoteSection(val title: String, val rows: List<NoteRow>)
 
@@ -52,8 +60,21 @@ class BrowserViewModel(
 
     val query: StateFlow<String> = savedState.getStateFlow(KEY_QUERY, "")
 
-    val folders: StateFlow<List<FolderItem>> = combine(repository.folders(), repository.folderCounts()) { folders, counts ->
-        buildFolderItems(folders, counts.associate { it.folderRecordName to it.count })
+    private val sharingIndex: StateFlow<SharingIndex?> = repository.sharingIndex()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Notes shared with this account or by it, wherever they live. */
+    private val sharedNotes = combine(repository.allNotes(), repository.sharingIndex()) { notes, sharing ->
+        notes.filter { sharing.ofNote(it) != null }
+    }
+
+    val folders: StateFlow<List<FolderItem>> = combine(
+        repository.folders(),
+        repository.folderCounts(),
+        repository.sharingIndex(),
+        sharedNotes,
+    ) { folders, counts, sharing, shared ->
+        buildFolderItems(folders, counts.associate { it.folderRecordName to it.count }, sharing, shared.size)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val notes: StateFlow<NotesListState> = combine(selection, query.debounce { if (it.isEmpty()) 0 else 150 }) { selection, query ->
@@ -62,14 +83,16 @@ class BrowserViewModel(
         val source = when {
             query.isNotEmpty() -> repository.search(query)
             selection is FolderSelection.Folder -> repository.notesInFolder(selection.recordName)
+            selection == FolderSelection.Shared -> sharedNotes
             else -> repository.allNotes()
         }
-        val showFolder = query.isNotEmpty() || selection == FolderSelection.AllNotes
-        combine(source, folders) { notes, folders ->
+        // Lists that span folders say which folder each note is in.
+        val showFolder = query.isNotEmpty() || selection !is FolderSelection.Folder
+        combine(source, folders, repository.sharingIndex()) { notes, folders, sharing ->
             val folderTitles = folders.mapNotNull { item ->
                 (item.selection as? FolderSelection.Folder)?.let { it.recordName to item.title }
             }.toMap()
-            buildSections(notes, folderTitles.takeIf { showFolder })
+            buildSections(notes, folderTitles.takeIf { showFolder }, sharing)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NotesListState())
 
@@ -93,7 +116,7 @@ class BrowserViewModel(
         savedState[KEY_NEW_NOTE_FOLDER] = null
     }
 
-    /** Opens a new, empty note in the current folder (the default folder from "All iCloud"). */
+    /** Opens a new, empty note in the current folder (the default folder from "All iCloud" and "Shared"). */
     fun createNote() {
         val folder = (selection.value as? FolderSelection.Folder)?.recordName?.takeIf { it != SpecialFolders.TRASH }
             ?: SpecialFolders.DEFAULT
@@ -101,7 +124,11 @@ class BrowserViewModel(
         savedState[KEY_NOTE] = UUID.randomUUID().toString()
     }
 
-    val canCreateNotes: Boolean get() = selection.value != FolderSelection.Folder(SpecialFolders.TRASH)
+    /** Not in Recently Deleted, nor in a folder shared with this account to view only. */
+    val canCreateNotes: Boolean get() {
+        val folder = (selection.value as? FolderSelection.Folder)?.recordName ?: return true
+        return folder != SpecialFolders.TRASH && sharingIndex.value?.ofFolder(folder)?.canEdit != false
+    }
 
     fun setQuery(query: String) {
         savedState[KEY_QUERY] = query
@@ -109,11 +136,12 @@ class BrowserViewModel(
 
     fun folderTitle(selection: FolderSelection): String = when (selection) {
         FolderSelection.AllNotes -> "All iCloud"
+        FolderSelection.Shared -> "Shared"
         is FolderSelection.Folder -> folders.value.firstOrNull { it.selection == selection }?.title
             ?: if (selection.recordName == SpecialFolders.TRASH) "Recently Deleted" else "Notes"
     }
 
-    private fun buildSections(notes: List<NoteSummary>, folderTitles: Map<String, String>?): NotesListState {
+    private fun buildSections(notes: List<NoteSummary>, folderTitles: Map<String, String>?, sharing: SharingIndex): NotesListState {
         val today = LocalDate.now()
         val pinned = notes.filter { it.isPinned }
         val sections = mutableListOf<NoteSection>()
@@ -121,6 +149,7 @@ class BrowserViewModel(
             summary = note,
             dateLabel = NoteDates.shortLabel(note.modificationDate, today),
             folderTitle = folderTitles?.let { titles -> note.folderRecordName?.let(titles::get) },
+            sharing = sharing.ofNote(note),
         )
         if (pinned.isNotEmpty()) sections += NoteSection("Pinned", pinned.map(::row))
         notes.filterNot { it.isPinned }
@@ -136,14 +165,19 @@ class BrowserViewModel(
         const val KEY_QUERY = "query"
         const val KEY_NEW_NOTE_FOLDER = "new_note_folder"
         const val ALL_NOTES = "all"
+        const val SHARED = "shared"
         const val FOLDER_PREFIX = "folder:"
 
         fun encodeSelection(selection: FolderSelection): String = when (selection) {
             FolderSelection.AllNotes -> ALL_NOTES
+            FolderSelection.Shared -> SHARED
             is FolderSelection.Folder -> FOLDER_PREFIX + selection.recordName
         }
 
-        fun decodeSelection(key: String): FolderSelection =
-            if (key.startsWith(FOLDER_PREFIX)) FolderSelection.Folder(key.removePrefix(FOLDER_PREFIX)) else FolderSelection.AllNotes
+        fun decodeSelection(key: String): FolderSelection = when {
+            key.startsWith(FOLDER_PREFIX) -> FolderSelection.Folder(key.removePrefix(FOLDER_PREFIX))
+            key == SHARED -> FolderSelection.Shared
+            else -> FolderSelection.AllNotes
+        }
     }
 }

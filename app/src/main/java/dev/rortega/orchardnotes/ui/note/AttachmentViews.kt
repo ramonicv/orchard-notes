@@ -17,6 +17,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import dev.rortega.orchardnotes.notes.doc.PlacedAttachment
+import dev.rortega.orchardnotes.cloudkit.NotesZone
 import dev.rortega.orchardnotes.ui.appContainer
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -77,7 +78,7 @@ enum class AttachmentKind(val label: String, val icon: ImageVector) {
  * when iCloud has one, otherwise a labeled card.
  */
 @Composable
-fun AttachmentView(attachment: PlacedAttachment, modifier: Modifier = Modifier) {
+fun AttachmentView(attachment: PlacedAttachment, modifier: Modifier = Modifier, zone: NotesZone = NotesZone.Private) {
     val kind = AttachmentKind.of(attachment.typeUti)
     if (kind !in PICTURE_KINDS) {
         AttachmentPlaceholder(attachment.typeUti, modifier)
@@ -85,8 +86,8 @@ fun AttachmentView(attachment: PlacedAttachment, modifier: Modifier = Modifier) 
     }
     val images = appContainer().attachmentImages
     val maxWidth = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.roundToPx() }
-    val image by produceState<ImageState>(ImageState.Loading, attachment.identifier) {
-        value = runCatching { images.load(attachment.identifier, maxWidth) }.getOrNull()
+    val image by produceState<ImageState>(ImageState.Loading, attachment.identifier, zone) {
+        value = runCatching { images.load(attachment.identifier, maxWidth, zone) }.getOrNull()
             ?.let { ImageState.Loaded(it.asImageBitmap()) } ?: ImageState.Missing
     }
     when (val current = image) {

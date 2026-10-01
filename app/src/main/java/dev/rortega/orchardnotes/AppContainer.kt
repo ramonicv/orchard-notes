@@ -65,7 +65,10 @@ class AppContainer(context: Context) {
     private val database = NotesDatabase.create(appContext)
     private val syncPrefs = appContext.getSharedPreferences("sync", Context.MODE_PRIVATE)
 
-    val notesSync: NotesSync = NotesSync(cloudKit, database.notesDao(), syncPrefs)
+    val notesSync: NotesSync = NotesSync(cloudKit, database.notesDao(), syncPrefs) { notes ->
+        // Edits still waiting to be pushed are rebased onto what just arrived.
+        noteWriter.rebaseOnServerChanges(notes)
+    }
 
     /**
      * This installation's identity in note CRDTs. Persisted forever: Apple keeps one clock

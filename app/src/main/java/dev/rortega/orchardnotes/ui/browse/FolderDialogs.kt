@@ -43,7 +43,10 @@ fun MoveToFolderDialog(
     onMove: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val choices = folders.filter { it.kind == FolderKind.Default || it.kind == FolderKind.Regular }
+    // The account's own folders (shared ones included); notes can't move into someone else's.
+    val choices = folders.filter {
+        it.kind == FolderKind.Default || it.kind == FolderKind.Regular || (it.kind == FolderKind.SharedFolder && !it.sharedWithMe)
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Move to folder") },

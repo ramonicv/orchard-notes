@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.AlertDialog
@@ -66,6 +67,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.rortega.orchardnotes.cloudkit.NotesZone
+import dev.rortega.orchardnotes.data.SharingInfo
 import dev.rortega.orchardnotes.data.SpecialFolders
 import dev.rortega.orchardnotes.ui.appContainer
 import dev.rortega.orchardnotes.ui.browse.NoteDates
@@ -168,7 +171,8 @@ fun NotePane(
                                             leadingIcon = { Icon(Icons.Outlined.DeleteForever, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
                                             onClick = { menuOpen = false; confirmingPermanentDelete = true },
                                         )
-                                    } else {
+                                    } else if (ready.sharing?.sharedWithMe != true) {
+                                        // A note shared with this account is moved or deleted by its owner only.
                                         DropdownMenuItem(
                                             text = { Text("Move to…") },
                                             leadingIcon = { Icon(Icons.AutoMirrored.Outlined.DriveFileMove, contentDescription = null) },
@@ -256,6 +260,7 @@ fun NotePane(
                             onSaveAsNew = { viewModel.saveLocalChangesAsNewNote(onOpenNote) },
                         )
                     }
+                    current.sharing?.let { SharingLine(it) }
                     Text(
                         NoteDates.longLabel(current.note?.modificationDate ?: System.currentTimeMillis()),
                         style = MaterialTheme.typography.bodySmall,
@@ -278,14 +283,18 @@ fun NotePane(
                         RequestFocusOnce(focusRequester)
                     } else {
                         if (!current.editable && current.readOnlyReason != null && current.note?.folderRecordName != SpecialFolders.TRASH) {
-                            ReadOnlyNotice(current.readOnlyReason) { IcloudWebActivity.open(context) }
+                            // iCloud.com can't edit a note shared to view only either.
+                            ReadOnlyNotice(
+                                current.readOnlyReason,
+                                onOpenWeb = { IcloudWebActivity.open(context) }.takeIf { current.sharing?.canEdit != false },
+                            )
                         }
                         val body = @Composable {
                             NoteBody(
                                 content = current.content,
                                 paragraphs = current.paragraphs,
                                 onToggleChecklist = if (current.editable) viewModel::toggleChecklist else null,
-                                attachment = { AttachmentView(it) },
+                                attachment = { AttachmentView(it, zone = NotesZone(current.note?.zoneOwner)) },
                                 onTextTap = if (current.editable) { offset -> viewModel.startEditing(offset) } else null,
                             )
                         }
@@ -338,8 +347,26 @@ private fun SyncProblemBanner(message: String, onDiscard: () -> Unit, onSaveAsNe
     }
 }
 
+/** Who shared the note, or whom it's shared with. */
 @Composable
-private fun ReadOnlyNotice(reason: String, onOpenWeb: () -> Unit) {
+private fun SharingLine(sharing: SharingInfo) {
+    val text = when {
+        sharing.sharedWithMe -> sharing.ownerName?.let { "Shared by $it" } ?: "Shared with you"
+        sharing.participants.isEmpty() -> "Shared"
+        else -> "Shared with ${sharing.participants.joinToString(", ")}"
+    }
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+    ) {
+        Icon(Icons.Outlined.People, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+        Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, maxLines = 2)
+    }
+}
+
+@Composable
+private fun ReadOnlyNotice(reason: String, onOpenWeb: (() -> Unit)?) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = RoundedCornerShape(12.dp),
@@ -357,7 +384,7 @@ private fun ReadOnlyNotice(reason: String, onOpenWeb: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = onOpenWeb) { Text("Edit on iCloud.com") }
+            onOpenWeb?.let { TextButton(onClick = it) { Text("Edit on iCloud.com") } }
         }
     }
 }
