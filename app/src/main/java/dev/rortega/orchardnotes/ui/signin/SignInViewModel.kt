@@ -1,6 +1,7 @@
 package dev.rortega.orchardnotes.ui.signin
 
 import android.net.Uri
+import android.os.SystemClock
 import android.webkit.CookieManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -46,6 +47,8 @@ class SignInViewModel(
     private val _state = MutableStateFlow(SignInUiState())
     val state: StateFlow<SignInUiState> = _state.asStateFlow()
 
+    val diagnostics = SignInDiagnostics(SystemClock::elapsedRealtime)
+
     private val checkMutex = Mutex()
     private var pendingCheck: Job? = null
     private var completed = false
@@ -74,12 +77,14 @@ class SignInViewModel(
 
     /** A setup response relayed by the injected hook. */
     fun onBridgeMessage(message: String) {
+        val envelope = runCatching { json.parseToJsonElement(message).jsonObject }.getOrNull() ?: return
         val body = runCatching {
-            val envelope = json.parseToJsonElement(message).jsonObject
             val text = envelope["body"]?.jsonPrimitive?.contentOrNull ?: return
             json.parseToJsonElement(text) as? JsonObject
         }.getOrNull() ?: return
         val result = runCatching { SetupClient.parseValidateBody(body) }.getOrNull()
+        val url = envelope["url"]?.jsonPrimitive?.contentOrNull
+        diagnostics.record("page got ${SignInDiagnostics.shortUrl(url)}: ${describe(result)}")
         if (result is ValidateResult.SignedIn) {
             _state.update { it.copy(finishing = true) }
             scheduleCheck(delayMs = 300)
@@ -97,6 +102,7 @@ class SignInViewModel(
     private suspend fun check() = checkMutex.withLock {
         if (completed) return@withLock
         val result = runCatching { sessionManager.completeSignIn() }
+        diagnostics.record("app checked the session: ${result.fold(::describe) { "failed (${it.message})" }}")
         result.onSuccess {
             when (it) {
                 is ValidateResult.SignedIn -> completed = true
@@ -106,6 +112,18 @@ class SignInViewModel(
         }.onFailure { error ->
             _state.update { it.copy(finishing = false, error = error.message ?: "Sign-in check failed.") }
         }
+    }
+
+    /** The page snapshot's text, from `evaluateJavascript`'s JSON-encoded result. */
+    fun pageSnapshotText(result: String?): String =
+        result?.let { runCatching { json.parseToJsonElement(it).jsonPrimitive.contentOrNull }.getOrNull() }
+            ?: "(the page didn't answer)"
+
+    private fun describe(result: ValidateResult?): String = when (result) {
+        is ValidateResult.SignedIn -> "signed in"
+        ValidateResult.ChallengePending -> "waiting for two-factor authentication"
+        ValidateResult.NotSignedIn -> "not signed in"
+        null -> "unrecognized response"
     }
 
     private fun hasAuthCookie(): Boolean =

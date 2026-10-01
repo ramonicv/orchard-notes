@@ -64,6 +64,8 @@ Every write to an existing note goes through these gates: fetch a fresh copy, re
 - Pinning, renaming or deleting folders, and hashtags/mentions as tokens aren't supported yet.
 - Very large notes whose text is stored as a separate asset are read-only.
 
+If the iCloud sign-in page doesn't load, the sign-in screen's ⋮ menu has *Troubleshooting info*: what the page loaded, any errors it reported, and what it shows right now, ready to share.
+
 ## Development
 
 ```bash
