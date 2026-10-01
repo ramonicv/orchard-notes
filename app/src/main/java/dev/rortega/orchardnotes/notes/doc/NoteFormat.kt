@@ -175,6 +175,19 @@ object NoteFormat {
         return FormatResult.Ok(paragraphs)
     }
 
+    /** Every line as an unstyled Body paragraph. */
+    fun plainParagraphs(text: String): List<FormatParagraph> {
+        var offset = 0
+        return text.split('\n').map { line ->
+            FormatParagraph(
+                kind = ParagraphKind.Body,
+                text = line,
+                spans = if (line.isEmpty()) emptyList() else listOf(InlineSpan(line.length, InlineStyle.Plain)),
+                start = offset,
+            ).also { offset += line.length + 1 }
+        }
+    }
+
     /** Merges adjacent spans with equal styles and drops empty ones. */
     fun mergeSpans(spans: List<InlineSpan>): List<InlineSpan> {
         val out = mutableListOf<InlineSpan>()
