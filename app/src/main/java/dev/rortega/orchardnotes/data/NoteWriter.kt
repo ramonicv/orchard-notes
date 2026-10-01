@@ -17,8 +17,10 @@ import dev.rortega.orchardnotes.notes.doc.NoteEditing
 import dev.rortega.orchardnotes.notes.doc.NoteFormat
 import dev.rortega.orchardnotes.notes.doc.OBJECT_REPLACEMENT_CHARACTER
 import dev.rortega.orchardnotes.notes.doc.TextDiff
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.util.Base64
@@ -62,8 +64,9 @@ class NoteWriter(
     private val paragraphsSerializer = ListSerializer(FormatParagraph.serializer())
 
     /**
-     * Held by every read-modify-write of a pending edit outside [push] (saving from the
-     * editor, rebasing onto a newer server version), so none of them loses another's change.
+     * Held by every read-modify-write of a pending edit (saving from the editor, rebasing
+     * onto a newer server version, a push recording that it's done), so none of them loses
+     * another's change.
      */
     val pendingLock = Mutex()
 
@@ -133,7 +136,15 @@ class NoteWriter(
         if (changed) dao.overlayPendingEdits()
     }
 
-    suspend fun push(recordName: String): PushOutcome {
+    /**
+     * Pushes the note's pending edit. Once started it runs to the end, even if the caller is
+     * cancelled (the note closing, the app leaving the screen): iCloud may already have taken
+     * the write, and if the pending edit never learned so, the next push would take our own
+     * change for someone else's (duplicating its text, or saving a needless copy).
+     */
+    suspend fun push(recordName: String): PushOutcome = withContext(NonCancellable) { pushEdit(recordName) }
+
+    private suspend fun pushEdit(recordName: String): PushOutcome {
         val pending = dao.getPending(recordName) ?: return PushOutcome.NothingToDo
         if (pending.blocked) return PushOutcome.Blocked(pending.error ?: "Needs attention")
         val desired = ParagraphMerge.withOffsets(decodeParagraphs(pending.desiredJson))
@@ -296,9 +307,12 @@ class NoteWriter(
     /**
      * Pushes one queued move / permanent delete / new folder. Moves and deletes are
      * ordinary updates of a fresh copy of the note (Apple's "delete" is a move to Recently
-     * Deleted; a permanent delete also marks it Deleted), retried on write conflicts.
+     * Deleted; a permanent delete also marks it Deleted), retried on write conflicts. Like
+     * [push], it runs to the end once started.
      */
-    suspend fun pushOp(op: PendingOpEntity) {
+    suspend fun pushOp(op: PendingOpEntity) = withContext(NonCancellable) { pushOperation(op) }
+
+    private suspend fun pushOperation(op: PendingOpEntity) {
         if (op.type != PendingOpEntity.CREATE_FOLDER && dao.getNote(op.recordName)?.zoneOwner != null) {
             return failOp(op, "Notes shared with you can only be moved or deleted by the person who shared them.")
         }
@@ -353,7 +367,8 @@ class NoteWriter(
         return compressed.takeIf { NoteFormat.formatsEqual(format.paragraphs, expected) }
     }
 
-    private suspend fun finish(pending: PendingEditEntity) {
+    private suspend fun finish(pending: PendingEditEntity) = pendingLock.withLock {
+        // Under the lock: a save that read the edit just before this would otherwise write it back on its old base.
         if (dao.deletePendingIfUnchanged(pending.recordName, pending.updatedAt) == 0) {
             // Edited again while this push was in flight: those edits now build on what we just pushed.
             dao.rebasePending(pending.recordName, pending.desiredJson)
