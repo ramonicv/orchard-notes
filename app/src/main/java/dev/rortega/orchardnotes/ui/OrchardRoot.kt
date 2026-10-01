@@ -12,7 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.rortega.orchardnotes.auth.SessionState
-import dev.rortega.orchardnotes.ui.notes.AllNotesScreen
+import dev.rortega.orchardnotes.ui.browse.NotesBrowser
 import dev.rortega.orchardnotes.ui.signin.SignInScreen
 import dev.rortega.orchardnotes.ui.signin.WelcomeScreen
 
@@ -35,10 +35,7 @@ fun OrchardRoot() {
             if (signingIn) {
                 SignInScreen(onClose = { signingIn = false })
             } else {
-                LaunchedEffect(state.account.dsid, state.expired) {
-                    if (!state.expired) container.notesRepository.requestSync()
-                }
-                AllNotesScreen()
+                NotesBrowser(session = state, onSignInAgain = { signingIn = true })
             }
     }
 }
