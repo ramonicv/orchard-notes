@@ -1,6 +1,8 @@
 package dev.rortega.orchardnotes.auth
 
+import android.content.Context
 import android.content.SharedPreferences
+import android.webkit.WebSettings
 import androidx.core.content.edit
 import java.util.Locale
 import java.util.UUID
@@ -14,17 +16,17 @@ interface ClientParams {
 
 /**
  * How this app identifies itself to iCloud's web services: the same query
- * parameters the www.icloud.com web client sends, plus a desktop Safari
- * User-Agent shared by the sign-in WebView and every API call (Apple ties
- * sessions loosely to the client that created them).
+ * parameters the www.icloud.com web client sends, plus a browser-like User-Agent
+ * shared by the sign-in WebView and every API call (Apple ties sessions loosely
+ * to the client that created them).
  *
  * The build/mastering numbers are refreshed from whatever the sign-in page itself
  * sends, so they follow Apple's web client releases; the defaults are only used
  * until the first sign-in.
  */
-class ClientIdentity(private val prefs: SharedPreferences) : ClientParams {
+class ClientIdentity(context: Context, private val prefs: SharedPreferences) : ClientParams {
 
-    val userAgent: String = USER_AGENT
+    val userAgent: String = browserUserAgent(context)
 
     override val clientId: String
         get() = prefs.getString(KEY_CLIENT_ID, null) ?: UUID.randomUUID().toString().uppercase(Locale.ROOT).also {
@@ -60,12 +62,21 @@ class ClientIdentity(private val prefs: SharedPreferences) : ClientParams {
         const val DEFAULT_CLIENT_MASTERING_NUMBER = "2624Build27"
 
         /**
-         * Desktop Safari, the browser www.icloud.com is built for, and the identity other apps
-         * use to host iCloud's sign-in in an Android WebView. The page is still laid out at the
-         * WebView's width, so it fits the phone.
+         * The system WebView's User-Agent, minus the markers that identify it as an
+         * embedded WebView ("; wv", "Version/4.0") and the device build id, so the
+         * sign-in page treats it as regular mobile Chrome.
          */
-        const val USER_AGENT =
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 " +
-                "(KHTML, like Gecko) Version/18.6 Safari/605.1.15"
+        fun browserUserAgent(context: Context): String {
+            val raw = runCatching { WebSettings.getDefaultUserAgent(context) }.getOrNull()
+                ?: return FALLBACK_USER_AGENT
+            return raw
+                .replace("; wv", "")
+                .replace(Regex(" Build/[^;)]+"), "")
+                .replace("Version/4.0 ", "")
+        }
+
+        private const val FALLBACK_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/140.0.0.0 Mobile Safari/537.36"
     }
 }
