@@ -76,12 +76,14 @@ class NoteWriterTest {
                             serverTag += "x"
                             respond("""{"records":[{"recordName":"$name","serverErrorCode":"CONFLICT","reason":"oplock"}]}""")
                         } else {
-                            val text = record["fields"]!!.jsonObject["TextDataEncrypted"]!!.jsonObject["value"]!!.jsonPrimitive.content
-                            if (name == "NOTE") {
+                            val text = record["fields"]!!.jsonObject["TextDataEncrypted"]?.jsonObject?.get("value")?.jsonPrimitive?.content
+                            if (name == "NOTE" && text != null) {
                                 serverBody = text
                                 serverTag = "tag-saved"
                             }
-                            respond("""{"records":[${recordJson(name, text, "tag-saved")}]}""")
+                            // Echo the written record back the way CloudKit does, with a new change tag.
+                            val saved = JsonObject(record + ("recordChangeTag" to kotlinx.serialization.json.JsonPrimitive("tag-saved")))
+                            respond("""{"records":[$saved]}""")
                         }
                     }
                     else -> MockResponse.Builder().code(404).build()
@@ -275,5 +277,70 @@ class NoteWriterTest {
         assertEquals(PushOutcome.NothingToDo, writer.push("NOTE"))
         assertTrue(modifyBodies.isEmpty())
         assertNull(dao.pending["NOTE"])
+    }
+
+    private fun field(op: JsonObject, name: String) =
+        op["record"]!!.jsonObject["fields"]!!.jsonObject[name]?.jsonObject?.get("value")
+
+    @Test
+    fun movingANoteRewritesBothFolderReferencesAndKeepsItsBody() = runTest {
+        serverBody = serverNote(paragraphs(title))
+        val op = PendingOpEntity(PendingOpEntity.MOVE, "NOTE", folderRecordName = "FOLDER-2", createdAt = 5)
+        dao.upsertOp(op)
+
+        writer.pushOp(op)
+
+        val sent = modifyBodies.single()["operations"]!!.jsonArray[0].jsonObject
+        assertEquals("FOLDER-2", field(sent, "Folder")!!.jsonObject["recordName"]!!.jsonPrimitive.content)
+        assertEquals("FOLDER-2", field(sent, "Folders")!!.jsonArray[0].jsonObject["recordName"]!!.jsonPrimitive.content)
+        assertTrue(field(sent, "FoldersModificationDate") != null)
+        assertNull(field(sent, "Deleted"))
+        assertEquals(serverBody, field(sent, "TextDataEncrypted")!!.jsonPrimitive.content)
+        assertTrue(dao.ops.isEmpty())
+    }
+
+    @Test
+    fun permanentDeleteMovesToTrashAndMarksDeleted() = runTest {
+        serverBody = serverNote(paragraphs(title))
+        val op = PendingOpEntity(PendingOpEntity.PURGE, "NOTE", createdAt = 5)
+        dao.upsertOp(op)
+
+        writer.pushOp(op)
+
+        val sent = modifyBodies.single()["operations"]!!.jsonArray[0].jsonObject
+        assertEquals(SpecialFolders.TRASH, field(sent, "Folder")!!.jsonObject["recordName"]!!.jsonPrimitive.content)
+        assertEquals("1", field(sent, "Deleted")!!.jsonPrimitive.content)
+        assertTrue(dao.ops.isEmpty())
+    }
+
+    @Test
+    fun movesOfNotesAlreadyThereOrGoneAreDropped() = runTest {
+        serverBody = serverNote(paragraphs(title))
+        val alreadyThere = PendingOpEntity(PendingOpEntity.MOVE, "NOTE", folderRecordName = "DefaultFolder-CloudKit", createdAt = 1)
+        dao.upsertOp(alreadyThere)
+        writer.pushOp(alreadyThere)
+        serverBody = null
+        val gone = PendingOpEntity(PendingOpEntity.PURGE, "NOTE", createdAt = 2)
+        dao.upsertOp(gone)
+        writer.pushOp(gone)
+        assertTrue(modifyBodies.isEmpty())
+        assertTrue(dao.ops.isEmpty())
+    }
+
+    @Test
+    fun newFoldersAreCreatedWithAnEncodedTitleAndParent() = runTest {
+        val op = PendingOpEntity(PendingOpEntity.CREATE_FOLDER, "FOLDER-NEW", title = "Recipes", parentRecordName = "FOLDER-1", createdAt = 1)
+        dao.upsertOp(op)
+
+        writer.pushOp(op)
+
+        val sent = modifyBodies.single()["operations"]!!.jsonArray[0].jsonObject
+        assertEquals("create", sent["operationType"]!!.jsonPrimitive.content)
+        val record = sent["record"]!!.jsonObject
+        assertEquals("Folder", record["recordType"]!!.jsonPrimitive.content)
+        assertEquals("FOLDER-1", record["parent"]!!.jsonObject["recordName"]!!.jsonPrimitive.content)
+        assertEquals("Recipes", String(Base64.getDecoder().decode(field(sent, "TitleEncrypted")!!.jsonPrimitive.content)))
+        assertEquals("FOLDER-1", field(sent, "ParentFolder")!!.jsonObject["recordName"]!!.jsonPrimitive.content)
+        assertEquals("Folder", applied.single().recordType)
     }
 }

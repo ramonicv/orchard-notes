@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -52,7 +53,10 @@ class NotesRepository(
     private val saveMutex = Mutex()
 
     init {
-        scope.launch { dao.observePendingCount().collect { count -> _syncStatus.update { it.copy(pendingCount = count) } } }
+        scope.launch {
+            combine(dao.observePendingCount(), dao.observeOpCount()) { edits, ops -> edits + ops }
+                .collect { count -> _syncStatus.update { it.copy(pendingCount = count) } }
+        }
     }
 
     fun folders(): Flow<List<FolderEntity>> = dao.observeFolders()
@@ -62,6 +66,7 @@ class NotesRepository(
     fun search(query: String): Flow<List<NoteSummary>> = dao.observeSearch(query, SpecialFolders.TRASH)
     fun note(recordName: String): Flow<NoteEntity?> = dao.observeNote(recordName)
     fun pendingEdit(recordName: String): Flow<PendingEditEntity?> = dao.observePending(recordName)
+    suspend fun folderOf(recordName: String): String? = dao.getNote(recordName)?.folderRecordName
 
     fun decodeParagraphs(json: String): List<FormatParagraph> = ParagraphMerge.withOffsets(writer.decodeParagraphs(json))
 
@@ -183,6 +188,65 @@ class NotesRepository(
         return newName
     }
 
+    // --- moving, deleting, folders --------------------------------------------------
+
+    /** Moves a note to another folder (Recently Deleted included); queued like any edit. */
+    suspend fun moveNote(recordName: String, folderRecordName: String) {
+        val pending = dao.getPending(recordName)
+        if (pending?.isNew == true) {
+            // Never reached iCloud: just change where it will be created.
+            dao.setPendingFolder(recordName, folderRecordName)
+        } else {
+            dao.upsertOp(PendingOpEntity(PendingOpEntity.MOVE, recordName, folderRecordName = folderRecordName, createdAt = System.currentTimeMillis()))
+        }
+        dao.setNoteFolder(recordName, folderRecordName)
+        schedulePush(delayMs = 0)
+    }
+
+    /** Apple's delete: the note moves to Recently Deleted and can be recovered for 30 days. */
+    suspend fun trashNote(recordName: String) {
+        if (dao.getPending(recordName)?.isNew == true) {
+            forgetLocalNote(recordName)
+        } else {
+            moveNote(recordName, SpecialFolders.TRASH)
+        }
+    }
+
+    suspend fun recoverNote(recordName: String) = moveNote(recordName, SpecialFolders.DEFAULT)
+
+    /** Removes a note for good, including any unsynced edits to it. */
+    suspend fun deleteNotePermanently(recordName: String) {
+        if (dao.getPending(recordName)?.isNew == true) {
+            forgetLocalNote(recordName)
+            return
+        }
+        dao.deletePending(recordName)
+        dao.deleteOpsFor(recordName)
+        dao.upsertOp(PendingOpEntity(PendingOpEntity.PURGE, recordName, createdAt = System.currentTimeMillis()))
+        dao.deleteNotes(listOf(recordName))
+        schedulePush(delayMs = 0)
+    }
+
+    /** Creates a folder (optionally inside another one). Returns its record name. */
+    suspend fun createFolder(title: String, parentRecordName: String? = null): String {
+        val recordName = java.util.UUID.randomUUID().toString()
+        dao.upsertFolders(listOf(FolderEntity(recordName, title, parentRecordName)))
+        dao.upsertOp(
+            PendingOpEntity(
+                PendingOpEntity.CREATE_FOLDER, recordName, title = title, parentRecordName = parentRecordName,
+                createdAt = System.currentTimeMillis(),
+            ),
+        )
+        schedulePush(delayMs = 0)
+        return recordName
+    }
+
+    private suspend fun forgetLocalNote(recordName: String) {
+        dao.deletePending(recordName)
+        dao.deleteOpsFor(recordName)
+        dao.deleteNotes(listOf(recordName))
+    }
+
     /** Pushes soon, coalescing bursts of edits (typing) into one write. */
     fun schedulePush(delayMs: Long = PUSH_DEBOUNCE_MS) {
         pushJob?.cancel()
@@ -196,6 +260,10 @@ class NotesRepository(
     suspend fun pushPending(): Boolean = pushMutex.withLock {
         if (sessionManager.account == null) return@withLock false
         var allPushed = true
+        val ops = dao.pushableOps()
+        // New folders first, so notes can be created in or moved into them.
+        val (folderCreates, otherOps) = ops.partition { it.type == PendingOpEntity.CREATE_FOLDER }
+        if (!pushOps(folderCreates)) return@withLock false
         for (pending in dao.pushablePending()) {
             try {
                 when (val outcome = writer.push(pending.recordName)) {
@@ -218,7 +286,26 @@ class NotesRepository(
                 allPushed = false
             }
         }
-        allPushed
+        pushOps(otherOps) && allPushed
+    }
+
+    /** Pushes queued operations in order; false if iCloud couldn't be reached. */
+    private suspend fun pushOps(ops: List<PendingOpEntity>): Boolean {
+        for (op in ops) {
+            try {
+                writer.pushOp(op)
+            } catch (e: SessionExpiredException) {
+                sessionManager.markExpired()
+                return false
+            } catch (e: TransientPushException) {
+                _syncStatus.update { it.copy(offline = true) }
+                schedulePushWhenOnline()
+                return false
+            } catch (e: Exception) {
+                dao.markOp(op.type, op.recordName, e.message ?: "Couldn't apply this change in iCloud.")
+            }
+        }
+        return true
     }
 
     suspend fun clear() {

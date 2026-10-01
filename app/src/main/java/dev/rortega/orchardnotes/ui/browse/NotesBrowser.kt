@@ -25,6 +25,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import dev.rortega.orchardnotes.ui.note.NoteActions
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
@@ -78,6 +84,47 @@ fun NotesBrowser(session: SessionState.SignedIn, onSignInAgain: () -> Unit) {
 
     val signOut: () -> Unit = { scope.launch { container.sessionManager.signOut() } }
 
+    var movingNote by rememberSaveable { mutableStateOf<String?>(null) }
+    val actions = remember(viewModel, repository) {
+        NoteActions(
+            move = { movingNote = it },
+            trash = { recordName ->
+                scope.launch {
+                    val previousFolder = repository.folderOf(recordName)
+                    repository.trashNote(recordName)
+                    if (viewModel.openNoteId.value == recordName) viewModel.closeNote()
+                    val result = snackbarHostState.showSnackbar("Moved to Recently Deleted", actionLabel = "Undo", duration = SnackbarDuration.Short)
+                    if (result == SnackbarResult.ActionPerformed && previousFolder != null) repository.moveNote(recordName, previousFolder)
+                }
+            },
+            recover = { recordName ->
+                scope.launch {
+                    repository.recoverNote(recordName)
+                    snackbarHostState.showSnackbar("Recovered to Notes", duration = SnackbarDuration.Short)
+                }
+            },
+            deletePermanently = { recordName ->
+                scope.launch {
+                    if (viewModel.openNoteId.value == recordName) viewModel.closeNote()
+                    repository.deleteNotePermanently(recordName)
+                }
+            },
+        )
+    }
+
+    movingNote?.let { recordName ->
+        val currentFolder by produceState<String?>(null, recordName) { value = repository.folderOf(recordName) }
+        MoveToFolderDialog(
+            folders = folders,
+            currentFolder = currentFolder,
+            onMove = { folder ->
+                movingNote = null
+                scope.launch { repository.moveNote(recordName, folder) }
+            },
+            onDismiss = { movingNote = null },
+        )
+    }
+
     LaunchedEffect(syncStatus.notice) {
         val notice = syncStatus.notice ?: return@LaunchedEffect
         repository.clearNotice()
@@ -96,6 +143,7 @@ fun NotesBrowser(session: SessionState.SignedIn, onSignInAgain: () -> Unit) {
             onSelected()
         },
         onSignOut = signOut,
+        onCreateFolder = { title -> scope.launch { repository.createFolder(title) } },
         modifier = modifier,
     )
 
@@ -111,6 +159,8 @@ fun NotesBrowser(session: SessionState.SignedIn, onSignInAgain: () -> Unit) {
         onNavigate = onNavigate,
         onQueryChange = viewModel::setQuery,
         onOpenNote = viewModel::openNote,
+        onMoveNote = { movingNote = it },
+        onDeleteNote = actions.trash,
         onRefresh = { repository.requestSync() },
         onSignInAgain = onSignInAgain,
         modifier = modifier,
@@ -137,6 +187,7 @@ fun NotesBrowser(session: SessionState.SignedIn, onSignInAgain: () -> Unit) {
                 showBack = showBack,
                 onBack = viewModel::closeNote,
                 onOpenNote = viewModel::openNote,
+                actions = actions,
                 modifier = modifier,
             )
         }

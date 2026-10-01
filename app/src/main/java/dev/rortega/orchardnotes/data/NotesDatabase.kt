@@ -7,11 +7,21 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [NoteEntity::class, FolderEntity::class, PendingEditEntity::class], version = 2, exportSchema = true)
+@Database(entities = [NoteEntity::class, FolderEntity::class, PendingEditEntity::class, PendingOpEntity::class], version = 3, exportSchema = true)
 abstract class NotesDatabase : RoomDatabase() {
     abstract fun notesDao(): NotesDao
 
     companion object {
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `pending_ops` (`type` TEXT NOT NULL, `recordName` TEXT NOT NULL, " +
+                        "`folderRecordName` TEXT, `title` TEXT, `parentRecordName` TEXT, `createdAt` INTEGER NOT NULL, " +
+                        "`error` TEXT, PRIMARY KEY(`type`, `recordName`))",
+                )
+            }
+        }
+
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -25,7 +35,7 @@ abstract class NotesDatabase : RoomDatabase() {
 
         fun create(context: Context): NotesDatabase =
             Room.databaseBuilder(context, NotesDatabase::class.java, "notes.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }

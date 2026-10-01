@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material3.AlertDialog
@@ -57,9 +58,11 @@ fun FoldersPane(
     showChevrons: Boolean,
     onSelect: (FolderSelection) -> Unit,
     onSignOut: () -> Unit,
+    onCreateFolder: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showAccount by rememberSaveable { mutableStateOf(false) }
+    var creatingFolder by rememberSaveable { mutableStateOf(false) }
     Scaffold(
         modifier = modifier,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -103,7 +106,23 @@ fun FoldersPane(
                     )
                 }
             }
+            item(key = "new-folder") {
+                TextButton(onClick = { creatingFolder = true }, modifier = Modifier.padding(top = 8.dp)) {
+                    Icon(Icons.Outlined.CreateNewFolder, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("New Folder")
+                }
+            }
         }
+    }
+    if (creatingFolder) {
+        NewFolderDialog(
+            onCreate = {
+                creatingFolder = false
+                onCreateFolder(it)
+            },
+            onDismiss = { creatingFolder = false },
+        )
     }
     if (showAccount) {
         AccountDialog(account, syncStatus, onDismiss = { showAccount = false }, onSignOut = {

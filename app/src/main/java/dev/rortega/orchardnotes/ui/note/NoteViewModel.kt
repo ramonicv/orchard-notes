@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import dev.rortega.orchardnotes.data.NoteEntity
 import dev.rortega.orchardnotes.data.NotesRepository
 import dev.rortega.orchardnotes.data.PendingEditEntity
+import dev.rortega.orchardnotes.data.SpecialFolders
 import dev.rortega.orchardnotes.notes.ParagraphMerge
 import dev.rortega.orchardnotes.notes.doc.FormatParagraph
 import dev.rortega.orchardnotes.notes.doc.FormatReconcile
@@ -221,6 +222,7 @@ class NoteViewModel(
             )
         }
         val readOnlyReason = when {
+            note.folderRecordName == SpecialFolders.TRASH -> "Recover this note to edit it."
             isLocalOnly -> null
             serverRaw == null || serverContent == null -> "This note's content couldn't be read."
             serverFormat !is FormatResult.Ok -> "This note uses formatting Orchard can't edit yet."

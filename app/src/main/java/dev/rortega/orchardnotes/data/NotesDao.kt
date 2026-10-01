@@ -47,7 +47,43 @@ interface NotesDao {
         if (folders.isNotEmpty()) upsertFolders(folders)
         if (notes.isNotEmpty()) upsertNotes(notes)
         overlayPendingEdits()
+        overlayPendingMoves()
+        deleteNotesPendingPurge()
     }
+
+    @Query(
+        "UPDATE notes SET folderRecordName = (SELECT o.folderRecordName FROM pending_ops o " +
+            "WHERE o.type = 'MOVE' AND o.recordName = notes.recordName) " +
+            "WHERE recordName IN (SELECT recordName FROM pending_ops WHERE type = 'MOVE')",
+    )
+    suspend fun overlayPendingMoves()
+
+    @Query("DELETE FROM notes WHERE recordName IN (SELECT recordName FROM pending_ops WHERE type = 'PURGE')")
+    suspend fun deleteNotesPendingPurge()
+
+    @Upsert
+    suspend fun upsertOp(op: PendingOpEntity)
+
+    @Query("SELECT * FROM pending_ops WHERE error IS NULL ORDER BY createdAt")
+    suspend fun pushableOps(): List<PendingOpEntity>
+
+    @Query("DELETE FROM pending_ops WHERE type = :type AND recordName = :recordName AND createdAt = :createdAt")
+    suspend fun deleteOpIfUnchanged(type: String, recordName: String, createdAt: Long): Int
+
+    @Query("DELETE FROM pending_ops WHERE recordName = :recordName")
+    suspend fun deleteOpsFor(recordName: String)
+
+    @Query("UPDATE pending_ops SET error = :error WHERE type = :type AND recordName = :recordName")
+    suspend fun markOp(type: String, recordName: String, error: String?)
+
+    @Query("SELECT COUNT(*) FROM pending_ops")
+    fun observeOpCount(): Flow<Int>
+
+    @Query("UPDATE notes SET folderRecordName = :folder WHERE recordName = :recordName")
+    suspend fun setNoteFolder(recordName: String, folder: String)
+
+    @Query("UPDATE pending_edits SET folderRecordName = :folder WHERE recordName = :recordName")
+    suspend fun setPendingFolder(recordName: String, folder: String)
 
     /** Keeps list rows showing local, not-yet-pushed edits after server data lands. */
     @Query(
@@ -92,16 +128,24 @@ interface NotesDao {
     @Query("DELETE FROM pending_edits")
     suspend fun clearPending()
 
+    @Query("DELETE FROM pending_ops")
+    suspend fun clearOps()
+
+    @Query("DELETE FROM folders WHERE recordName NOT IN (SELECT recordName FROM pending_ops WHERE type = 'CREATE_FOLDER')")
+    suspend fun clearFoldersWithoutPendingCreates()
+
     /** Clears the server cache. Pending local edits are kept unless [includingPending]. */
     @Transaction
     suspend fun clearAll(includingPending: Boolean = false) {
         if (includingPending) {
             clearPending()
+            clearOps()
             clearNotes()
+            clearFolders()
         } else {
             clearNotesWithoutPendingEdits()
+            clearFoldersWithoutPendingCreates()
         }
-        clearFolders()
     }
 
     @Query("SELECT * FROM notes WHERE recordName = :recordName")

@@ -24,11 +24,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material.icons.outlined.RestoreFromTrash
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,7 +50,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -55,11 +65,20 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.rortega.orchardnotes.data.SpecialFolders
 import dev.rortega.orchardnotes.ui.appContainer
 import dev.rortega.orchardnotes.ui.browse.NoteDates
 import dev.rortega.orchardnotes.ui.editor.EditorToolbar
 import dev.rortega.orchardnotes.ui.editor.NoteEditor
 import dev.rortega.orchardnotes.ui.editor.RequestFocusOnce
+
+/** What can be done to a note from its screen; implemented by the browser (navigation, undo). */
+data class NoteActions(
+    val move: (String) -> Unit,
+    val trash: (String) -> Unit,
+    val recover: (String) -> Unit,
+    val deletePermanently: (String) -> Unit,
+)
 
 /** Shows one note, and edits it when it can be edited safely. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,8 +89,11 @@ fun NotePane(
     showBack: Boolean,
     onBack: () -> Unit,
     onOpenNote: (String) -> Unit,
+    actions: NoteActions,
     modifier: Modifier = Modifier,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
+    var confirmingPermanentDelete by remember { mutableStateOf(false) }
     val repository = appContainer().notesRepository
     val viewModel: NoteViewModel = viewModel(key = "note-$recordName") { NoteViewModel(repository, recordName, newNoteFolder) }
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -128,6 +150,37 @@ fun NotePane(
                             }
                             context.startActivity(Intent.createChooser(send, null))
                         }) { Icon(Icons.Outlined.Share, contentDescription = "Share") }
+                        val inTrash = ready.note?.folderRecordName == SpecialFolders.TRASH
+                        if (ready.note != null) {
+                            Box {
+                                IconButton(onClick = { menuOpen = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "More") }
+                                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                                    if (inTrash) {
+                                        DropdownMenuItem(
+                                            text = { Text("Recover") },
+                                            leadingIcon = { Icon(Icons.Outlined.RestoreFromTrash, contentDescription = null) },
+                                            onClick = { menuOpen = false; actions.recover(recordName) },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Delete permanently", color = MaterialTheme.colorScheme.error) },
+                                            leadingIcon = { Icon(Icons.Outlined.DeleteForever, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                            onClick = { menuOpen = false; confirmingPermanentDelete = true },
+                                        )
+                                    } else {
+                                        DropdownMenuItem(
+                                            text = { Text("Move to…") },
+                                            leadingIcon = { Icon(Icons.AutoMirrored.Outlined.DriveFileMove, contentDescription = null) },
+                                            onClick = { menuOpen = false; actions.move(recordName) },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Delete") },
+                                            leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null) },
+                                            onClick = { menuOpen = false; actions.trash(recordName) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
             )
@@ -147,6 +200,15 @@ fun NotePane(
             }
         },
     ) { padding ->
+        if (confirmingPermanentDelete) {
+            ConfirmPermanentDelete(
+                onConfirm = {
+                    confirmingPermanentDelete = false
+                    actions.deletePermanently(recordName)
+                },
+                onDismiss = { confirmingPermanentDelete = false },
+            )
+        }
         Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             when (val current = state) {
                 NoteUiState.Loading -> CircularProgressIndicator(Modifier.padding(top = 48.dp))
@@ -163,6 +225,18 @@ fun NotePane(
                         .verticalScroll(rememberScrollState())
                         .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 32.dp),
                 ) {
+                    if (current.note?.folderRecordName == SpecialFolders.TRASH) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                        ) {
+                            Row(Modifier.padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("This note is in Recently Deleted.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                                TextButton(onClick = { actions.recover(recordName) }) { Text("Recover") }
+                            }
+                        }
+                    }
                     current.pending?.error?.let { error ->
                         SyncProblemBanner(
                             message = error,
@@ -191,7 +265,9 @@ fun NotePane(
                         )
                         RequestFocusOnce(focusRequester)
                     } else {
-                        if (!current.editable && current.readOnlyReason != null) ReadOnlyNotice(current.readOnlyReason)
+                        if (!current.editable && current.readOnlyReason != null && current.note?.folderRecordName != SpecialFolders.TRASH) {
+                            ReadOnlyNotice(current.readOnlyReason)
+                        }
                         val body = @Composable {
                             NoteBody(
                                 content = current.content,
@@ -219,6 +295,17 @@ fun NotePane(
             }
         }
     }
+}
+
+@Composable
+private fun ConfirmPermanentDelete(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete permanently?") },
+        text = { Text("This note will be deleted from iCloud on all your devices. This can't be undone.") },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable

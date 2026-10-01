@@ -73,3 +73,23 @@ data class PendingEditEntity(
     /** Pushing can't succeed without the user deciding what to do (see [error]). */
     val blocked: Boolean = false,
 )
+
+/** A queued structural change (move, permanent delete, new folder), pushed like [PendingEditEntity]. */
+@Entity(tableName = "pending_ops", primaryKeys = ["type", "recordName"])
+data class PendingOpEntity(
+    val type: String,
+    val recordName: String,
+    /** MOVE: destination folder. */
+    val folderRecordName: String? = null,
+    /** CREATE_FOLDER: the folder's name and optional parent. */
+    val title: String? = null,
+    val parentRecordName: String? = null,
+    val createdAt: Long,
+    val error: String? = null,
+) {
+    companion object {
+        const val MOVE = "MOVE"
+        const val PURGE = "PURGE"
+        const val CREATE_FOLDER = "CREATE_FOLDER"
+    }
+}

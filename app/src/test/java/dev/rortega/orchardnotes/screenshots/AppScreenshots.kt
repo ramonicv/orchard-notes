@@ -88,6 +88,29 @@ class AppScreenshots {
 
     @Test
     @Config(qualifiers = "w411dp-h891dp-xxhdpi")
+    fun noteActions() {
+        launchDemo().use {
+            settle()
+            compose.onNodeWithText("Groceries").performClick()
+            settle()
+            compose.onNodeWithContentDescription("More").performClick()
+            settle()
+            save("phone-8-note-menu")
+            compose.onNodeWithText("Delete").performClick()
+            settle()
+            save("phone-9-deleted-snackbar")
+            compose.onNodeWithContentDescription("Folders").performClick()
+            settle()
+            compose.onNodeWithText("Recently Deleted").performClick()
+            settle()
+            compose.onNodeWithText("Groceries").performClick()
+            settle()
+            save("phone-10-recently-deleted-note")
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w411dp-h891dp-xxhdpi")
     fun capturedNote() {
         launchDemo().use {
             settle()

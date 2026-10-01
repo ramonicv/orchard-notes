@@ -30,6 +30,7 @@ private val LightColors = lightColorScheme(
     outline = Color(0xFFCBC6BC),
     outlineVariant = Color(0xFFE2DED6),
     error = ErrorLight,
+    inversePrimary = GoldLight,
 )
 
 private val DarkColors = darkColorScheme(
@@ -55,6 +56,7 @@ private val DarkColors = darkColorScheme(
     outline = Color(0xFF5A5A5E),
     outlineVariant = Color(0xFF3F3F42),
     error = ErrorDark,
+    inversePrimary = GoldDeep,
 )
 
 @Composable

@@ -2,6 +2,7 @@ package dev.rortega.orchardnotes.ui.browse
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,10 +21,14 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Attachment
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -38,6 +43,10 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,6 +73,8 @@ fun NotesListPane(
     onNavigate: () -> Unit,
     onQueryChange: (String) -> Unit,
     onOpenNote: (String) -> Unit,
+    onMoveNote: (String) -> Unit,
+    onDeleteNote: (String) -> Unit,
     onRefresh: () -> Unit,
     onSignInAgain: () -> Unit,
     modifier: Modifier = Modifier,
@@ -157,6 +168,8 @@ fun NotesListPane(
                             row = row,
                             selected = row.summary.recordName == selectedNoteId,
                             onClick = { onOpenNote(row.summary.recordName) },
+                            onMove = { onMoveNote(row.summary.recordName) },
+                            onDelete = { onDeleteNote(row.summary.recordName) },
                             modifier = Modifier.clip(groupShape(index, section.rows.size)),
                         )
                         if (index < section.rows.lastIndex) {
@@ -225,15 +238,44 @@ private fun SessionExpiredBanner(onSignInAgain: () -> Unit) {
 }
 
 @Composable
-private fun NoteRowItem(row: NoteRow, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun NoteRowItem(
+    row: NoteRow,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onMove: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val note = row.summary
+    var menuOpen by remember { mutableStateOf(false) }
+    val inTrash = note.folderRecordName == dev.rortega.orchardnotes.data.SpecialFolders.TRASH
     Box(
         modifier = modifier
             .fillMaxWidth()
             .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
             .padding(horizontal = 16.dp, vertical = 11.dp),
     ) {
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text(if (inTrash) "Recover to…" else "Move to…") },
+                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.DriveFileMove, contentDescription = null) },
+                onClick = {
+                    menuOpen = false
+                    onMove()
+                },
+            )
+            if (!inTrash) {
+                DropdownMenuItem(
+                    text = { Text("Delete") },
+                    leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        onDelete()
+                    },
+                )
+            }
+        }
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (note.isLocked) {

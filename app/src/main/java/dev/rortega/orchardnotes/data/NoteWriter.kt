@@ -189,6 +189,52 @@ class NoteWriter(
         return PushOutcome.SavedAsCopy(pending.title, copyName)
     }
 
+    /**
+     * Pushes one queued move / permanent delete / new folder. Moves and deletes are
+     * ordinary updates of a fresh copy of the note (Apple's "delete" is a move to Recently
+     * Deleted; a permanent delete also marks it Deleted), retried on write conflicts.
+     */
+    suspend fun pushOp(op: PendingOpEntity) {
+        when (op.type) {
+            PendingOpEntity.CREATE_FOLDER -> {
+                val fields = NoteFields.folder(op.title.orEmpty(), op.parentRecordName)
+                when (val result = modify(NoteFields.createOperation("Folder", op.recordName, fields, parent = op.parentRecordName))) {
+                    is ModifyResult.Saved -> applyRecords(listOf(result.record))
+                    is ModifyResult.Failed -> return failOp(op, "iCloud rejected the new folder (${result.error.serverErrorCode}).")
+                    is ModifyResult.Deleted -> throw TransientPushException("Unexpected response from iCloud.")
+                }
+                dao.deleteOpIfUnchanged(op.type, op.recordName, op.createdAt)
+            }
+            PendingOpEntity.MOVE, PendingOpEntity.PURGE -> {
+                val purge = op.type == PendingOpEntity.PURGE
+                val folder = if (purge) SpecialFolders.TRASH else op.folderRecordName ?: SpecialFolders.DEFAULT
+                repeat(MAX_CONFLICT_RETRIES) {
+                    val fresh = lookup(op.recordName)
+                    if (fresh == null || (!purge && fresh.reference("Folder") == folder)) {
+                        // Already gone, or already where it should be.
+                        dao.deleteOpIfUnchanged(op.type, op.recordName, op.createdAt)
+                        return
+                    }
+                    val fields = NoteFields.relocate(fresh, folder, System.currentTimeMillis(), purge)
+                    when (val result = modify(NoteFields.updateOperation(fresh, fields))) {
+                        is ModifyResult.Saved -> {
+                            applyRecords(listOf(result.record))
+                            dao.deleteOpIfUnchanged(op.type, op.recordName, op.createdAt)
+                            return
+                        }
+                        is ModifyResult.Failed -> if (result.error.serverErrorCode != "CONFLICT") {
+                            return failOp(op, "iCloud rejected the change (${result.error.serverErrorCode}).")
+                        }
+                        is ModifyResult.Deleted -> throw TransientPushException("Unexpected response from iCloud.")
+                    }
+                }
+                throw TransientPushException("The note kept changing on another device; will retry.")
+            }
+        }
+    }
+
+    private suspend fun failOp(op: PendingOpEntity, reason: String) = dao.markOp(op.type, op.recordName, reason)
+
     /** Encodes, compresses and independently re-decodes the document; null if anything disagrees. */
     private fun verifiedPayload(doc: NoteDocument, expected: List<FormatParagraph>): ByteArray? {
         val encoded = doc.encode()
