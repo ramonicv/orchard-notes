@@ -85,8 +85,9 @@ interface NotesDao {
     @Query("UPDATE pending_edits SET error = :error, blocked = :blocked WHERE recordName = :recordName")
     suspend fun markPending(recordName: String, error: String?, blocked: Boolean)
 
-    @Query("UPDATE pending_edits SET isNew = 0 WHERE recordName = :recordName")
-    suspend fun markPendingCreated(recordName: String)
+    /** After a push, newer local edits continue from the version that was just pushed. */
+    @Query("UPDATE pending_edits SET isNew = 0, baseJson = :baseJson WHERE recordName = :recordName")
+    suspend fun rebasePending(recordName: String, baseJson: String)
 
     @Query("DELETE FROM pending_edits")
     suspend fun clearPending()

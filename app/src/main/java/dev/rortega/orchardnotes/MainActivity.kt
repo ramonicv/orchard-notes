@@ -17,7 +17,7 @@ class MainActivity : ComponentActivity() {
         // Initialize the WebView cookie store on the main thread before any network call uses it.
         CookieManager.getInstance()
         val container = (application as OrchardApplication).container
-        if (container.sessionManager.state.value == SessionState.Loading) {
+        if (!DemoMode.handle(intent, container) && container.sessionManager.state.value == SessionState.Loading) {
             container.appScope.launch { container.sessionManager.restore() }
         }
         setContent {

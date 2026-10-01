@@ -201,9 +201,9 @@ class NoteWriter(
     }
 
     private suspend fun finish(pending: PendingEditEntity) {
-        if (dao.deletePendingIfUnchanged(pending.recordName, pending.updatedAt) == 0 && pending.isNew) {
-            // Edited again while the create was in flight: the next push is an ordinary update.
-            dao.markPendingCreated(pending.recordName)
+        if (dao.deletePendingIfUnchanged(pending.recordName, pending.updatedAt) == 0) {
+            // Edited again while this push was in flight: those edits now build on what we just pushed.
+            dao.rebasePending(pending.recordName, pending.desiredJson)
         }
         dao.overlayPendingEdits()
     }

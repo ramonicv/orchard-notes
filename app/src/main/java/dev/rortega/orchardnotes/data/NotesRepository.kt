@@ -49,6 +49,7 @@ class NotesRepository(
     private var syncJob: Job? = null
     private var pushJob: Job? = null
     private val pushMutex = Mutex()
+    private val saveMutex = Mutex()
 
     init {
         scope.launch { dao.observePendingCount().collect { count -> _syncStatus.update { it.copy(pendingCount = count) } } }
@@ -148,6 +149,11 @@ class NotesRepository(
         }
         dao.overlayPendingEdits()
         schedulePush()
+    }
+
+    /** [saveDraft] on the app scope, for saves that must outlive the screen that started them. */
+    fun saveDraftInBackground(recordName: String, base: List<FormatParagraph>?, desired: List<FormatParagraph>, newNoteFolder: String?) {
+        scope.launch { saveMutex.withLock { saveDraft(recordName, base, desired, newNoteFolder) } }
     }
 
     /** Drops a local edit; the note goes back to what iCloud has. */

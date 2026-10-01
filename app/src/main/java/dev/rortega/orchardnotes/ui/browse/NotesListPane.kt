@@ -108,6 +108,16 @@ fun NotesListPane(
                 item(key = "search") { SearchField(query, onQueryChange) }
                 if (sessionExpired) {
                     item(key = "expired") { SessionExpiredBanner(onSignInAgain) }
+                } else if (syncStatus.offline) {
+                    item(key = "offline") {
+                        StatusLine(
+                            if (syncStatus.pendingCount > 0) {
+                                "Offline. ${syncStatus.pendingCount} ${if (syncStatus.pendingCount == 1) "change" else "changes"} will sync when you're back online."
+                            } else {
+                                "Offline. Showing notes saved on this device."
+                            },
+                        )
+                    }
                 } else if (syncStatus.error != null) {
                     item(key = "error") {
                         Text(
@@ -183,6 +193,16 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit) {
             unfocusedIndicatorColor = Color.Transparent,
         ),
         modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+    )
+}
+
+@Composable
+private fun StatusLine(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(4.dp, 0.dp, 4.dp, 8.dp),
     )
 }
 

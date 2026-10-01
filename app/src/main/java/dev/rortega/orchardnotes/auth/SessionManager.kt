@@ -68,6 +68,11 @@ class SessionManager(
         }
     }
 
+    /** Debug demo mode only: a signed-in state that is never persisted or validated. */
+    fun enterDemo(account: IcloudAccount) {
+        _state.value = SessionState.SignedIn(account)
+    }
+
     fun markExpired() {
         _state.update { current -> if (current is SessionState.SignedIn) current.copy(expired = true) else current }
     }

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import java.time.LocalDate
+import java.util.UUID
 
 data class NoteRow(val summary: NoteSummary, val dateLabel: String, val folderTitle: String?)
 
@@ -42,6 +43,9 @@ class BrowserViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, decodeSelection(selectionKey.value))
 
     val openNoteId: StateFlow<String?> = savedState.getStateFlow(KEY_NOTE, null)
+
+    /** Set while the open note is a new one being created in this folder. */
+    val newNoteFolder: StateFlow<String?> = savedState.getStateFlow(KEY_NEW_NOTE_FOLDER, null)
 
     /** Phone layout only: whether the folders list is showing instead of a notes list. */
     val showingFolders: StateFlow<Boolean> = savedState.getStateFlow(KEY_SHOWING_FOLDERS, false)
@@ -80,12 +84,24 @@ class BrowserViewModel(
     }
 
     fun openNote(recordName: String) {
+        savedState[KEY_NEW_NOTE_FOLDER] = null
         savedState[KEY_NOTE] = recordName
     }
 
     fun closeNote() {
         savedState[KEY_NOTE] = null
+        savedState[KEY_NEW_NOTE_FOLDER] = null
     }
+
+    /** Opens a new, empty note in the current folder (the default folder from "All iCloud"). */
+    fun createNote() {
+        val folder = (selection.value as? FolderSelection.Folder)?.recordName?.takeIf { it != SpecialFolders.TRASH }
+            ?: SpecialFolders.DEFAULT
+        savedState[KEY_NEW_NOTE_FOLDER] = folder
+        savedState[KEY_NOTE] = UUID.randomUUID().toString()
+    }
+
+    val canCreateNotes: Boolean get() = selection.value != FolderSelection.Folder(SpecialFolders.TRASH)
 
     fun setQuery(query: String) {
         savedState[KEY_QUERY] = query
@@ -118,6 +134,7 @@ class BrowserViewModel(
         const val KEY_NOTE = "note"
         const val KEY_SHOWING_FOLDERS = "showing_folders"
         const val KEY_QUERY = "query"
+        const val KEY_NEW_NOTE_FOLDER = "new_note_folder"
         const val ALL_NOTES = "all"
         const val FOLDER_PREFIX = "folder:"
 

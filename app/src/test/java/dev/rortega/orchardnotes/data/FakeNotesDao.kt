@@ -42,8 +42,8 @@ class FakeNotesDao : NotesDao {
     override suspend fun markPending(recordName: String, error: String?, blocked: Boolean) {
         pending[recordName]?.let { pending[recordName] = it.copy(error = error, blocked = blocked) }
     }
-    override suspend fun markPendingCreated(recordName: String) {
-        pending[recordName]?.let { pending[recordName] = it.copy(isNew = false) }
+    override suspend fun rebasePending(recordName: String, baseJson: String) {
+        pending[recordName]?.let { pending[recordName] = it.copy(isNew = false, baseJson = baseJson) }
     }
     override suspend fun clearPending() = pending.clear()
     override fun observeNote(recordName: String): Flow<NoteEntity?> = throw UnsupportedOperationException()

@@ -20,6 +20,19 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -51,6 +64,8 @@ fun NotesBrowser(session: SessionState.SignedIn, onSignInAgain: () -> Unit) {
     val selection by viewModel.selection.collectAsStateWithLifecycle()
     val notes by viewModel.notes.collectAsStateWithLifecycle()
     val openNoteId by viewModel.openNoteId.collectAsStateWithLifecycle()
+    val newNoteFolder by viewModel.newNoteFolder.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
     val showingFolders by viewModel.showingFolders.collectAsStateWithLifecycle()
     val query by viewModel.query.collectAsStateWithLifecycle()
     val syncStatus by repository.syncStatus.collectAsStateWithLifecycle()
@@ -62,6 +77,12 @@ fun NotesBrowser(session: SessionState.SignedIn, onSignInAgain: () -> Unit) {
     }
 
     val signOut: () -> Unit = { scope.launch { container.sessionManager.signOut() } }
+
+    LaunchedEffect(syncStatus.notice) {
+        val notice = syncStatus.notice ?: return@LaunchedEffect
+        repository.clearNotice()
+        snackbarHostState.showSnackbar(notice, withDismissAction = true, duration = SnackbarDuration.Long)
+    }
 
     @Composable
     fun foldersPane(modifier: Modifier, showChevrons: Boolean, onSelected: () -> Unit = {}) = FoldersPane(
@@ -93,6 +114,15 @@ fun NotesBrowser(session: SessionState.SignedIn, onSignInAgain: () -> Unit) {
         onRefresh = { repository.requestSync() },
         onSignInAgain = onSignInAgain,
         modifier = modifier,
+        floatingActionButton = {
+            if (viewModel.canCreateNotes && query.isBlank()) {
+                FloatingActionButton(
+                    onClick = viewModel::createNote,
+                    containerColor = MaterialTheme.colorScheme.secondary,
+                    contentColor = MaterialTheme.colorScheme.onSecondary,
+                ) { Icon(Icons.Outlined.EditNote, contentDescription = "New note") }
+            }
+        },
     )
 
     @Composable
@@ -101,12 +131,20 @@ fun NotesBrowser(session: SessionState.SignedIn, onSignInAgain: () -> Unit) {
         if (noteId == null) {
             NoNoteSelected(modifier)
         } else {
-            NotePane(recordName = noteId, showBack = showBack, onBack = viewModel::closeNote, modifier = modifier)
+            NotePane(
+                recordName = noteId,
+                newNoteFolder = newNoteFolder,
+                showBack = showBack,
+                onBack = viewModel::closeNote,
+                onOpenNote = viewModel::openNote,
+                modifier = modifier,
+            )
         }
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
+            SnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 80.dp).zIndex(1f))
             val width: Dp = maxWidth
             when {
                 width >= EXPANDED_WIDTH -> {

@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit
 
 /** Manual dependency graph for the app; one instance per process. */
 class AppContainer(context: Context) {
-    private val appContext = context.applicationContext
+    val appContext: Context = context.applicationContext
 
     /** Long-lived scope for work that must outlive a screen (sync, saves). */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

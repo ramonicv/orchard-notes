@@ -24,7 +24,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -63,7 +69,7 @@ sealed interface ListMarker {
 
 @Immutable
 private sealed interface Block {
-    data class Text(val paragraphIndex: Int, val paragraph: FormatParagraph, val marker: ListMarker?, val text: AnnotatedString) : Block
+    data class Text(val paragraphIndex: Int, val paragraph: FormatParagraph, val marker: ListMarker?, val text: AnnotatedString, val textStart: Int) : Block
     data class Code(val text: AnnotatedString, val quoteLevel: Int) : Block
     data class Attachment(val attachment: PlacedAttachment, val indent: Int) : Block
 }
@@ -80,6 +86,8 @@ fun NoteBody(
     onToggleChecklist: ((Int) -> Unit)?,
     attachment: @Composable (PlacedAttachment) -> Unit,
     modifier: Modifier = Modifier,
+    /** Receives the note-text offset of a tap on ordinary (non-link) text. */
+    onTextTap: ((Int) -> Unit)? = null,
 ) {
     val linkColor = MaterialTheme.colorScheme.primary
     val highlight = MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f)
@@ -90,7 +98,7 @@ fun NoteBody(
     Column(modifier) {
         blocks.forEach { block ->
             when (block) {
-                is Block.Text -> TextBlock(block, onToggleChecklist)
+                is Block.Text -> TextBlock(block, onToggleChecklist, onTextTap)
                 is Block.Code -> QuoteIndented(block.quoteLevel) {
                     Surface(
                         color = codeBackground,
@@ -113,7 +121,8 @@ fun NoteBody(
 }
 
 @Composable
-private fun TextBlock(block: Block.Text, onToggleChecklist: ((Int) -> Unit)?) {
+private fun TextBlock(block: Block.Text, onToggleChecklist: ((Int) -> Unit)?, onTextTap: ((Int) -> Unit)?) {
+    var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     val paragraph = block.paragraph
     val style = paragraphTextStyle(paragraph.kind)
     val done = (block.marker as? ListMarker.Checkbox)?.done == true
@@ -134,7 +143,20 @@ private fun TextBlock(block: Block.Text, onToggleChecklist: ((Int) -> Unit)?) {
                 block.text,
                 style = style,
                 color = if (done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
+                onTextLayout = { layout = it },
+                modifier = Modifier.weight(1f).then(
+                    if (onTextTap == null) {
+                        Modifier
+                    } else {
+                        Modifier.pointerInput(block) {
+                            detectTapGestures { position ->
+                                val offset = layout?.getOffsetForPosition(position) ?: block.text.length
+                                // Links open themselves; every other tap starts editing there.
+                                if (block.text.getLinkAnnotations(offset, offset + 1).isEmpty()) onTextTap(block.textStart + offset)
+                            }
+                        }
+                    },
+                ),
             )
         }
     }
@@ -142,7 +164,7 @@ private fun TextBlock(block: Block.Text, onToggleChecklist: ((Int) -> Unit)?) {
 
 @Composable
 private fun Marker(marker: ListMarker, style: TextStyle, onClick: (() -> Unit)?) {
-    val markerModifier = Modifier.width(30.dp)
+    val markerModifier = Modifier.width(24.dp)
     when (marker) {
         is ListMarker.Checkbox -> Box(
             modifier = markerModifier
@@ -241,7 +263,7 @@ private fun buildBlocks(content: NoteContent, paragraphs: List<FormatParagraph>,
             val placed = attachmentsByOffset[offset] ?: continue
             if (placed.isInline) continue
             if (offset > segmentStart) {
-                blocks += Block.Text(index, paragraph, markerPending, annotated(content, runOffsets, segmentStart, offset, colors))
+                blocks += Block.Text(index, paragraph, markerPending, annotated(content, runOffsets, segmentStart, offset, colors), segmentStart)
                 markerPending = null
                 emittedText = true
             }
@@ -249,7 +271,7 @@ private fun buildBlocks(content: NoteContent, paragraphs: List<FormatParagraph>,
             segmentStart = offset + 1
         }
         if (segmentStart < end || !emittedText && segmentStart == paragraph.start) {
-            blocks += Block.Text(index, paragraph, markerPending, annotated(content, runOffsets, segmentStart, end, colors))
+            blocks += Block.Text(index, paragraph, markerPending, annotated(content, runOffsets, segmentStart, end, colors), segmentStart)
         }
     }
     flushCode()
