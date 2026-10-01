@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -95,6 +96,8 @@ class IcloudWebActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView(context: Context, userAgent: String, onProgress: (Int) -> Unit, onHistory: (Boolean) -> Unit): WebView =
         WebView(context).apply {
+            // Not AndroidView's default WRAP_CONTENT height, which makes WebView lay pages out zero pixels tall.
+            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.userAgentString = userAgent

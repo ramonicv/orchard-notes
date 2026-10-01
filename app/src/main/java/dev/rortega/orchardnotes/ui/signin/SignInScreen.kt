@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.http.SslError
 import android.os.Build
+import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.SslErrorHandler
@@ -227,7 +228,11 @@ private fun createSignInWebView(
     val diagnostics = viewModel.diagnostics
     // Debug builds: the page can be inspected from chrome://inspect on a connected computer.
     if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
-    val webView = WebView(context)
+    val webView = WebView(context).apply {
+        // AndroidView would give the WebView WRAP_CONTENT height, and a WebView that wraps its
+        // content lays the page out zero pixels tall: iCloud's full-height page drew as blank.
+        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+    }
     with(webView.settings) {
         javaScriptEnabled = true
         domStorageEnabled = true
