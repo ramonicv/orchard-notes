@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.WarningAmber
@@ -71,6 +72,7 @@ import dev.rortega.orchardnotes.ui.browse.NoteDates
 import dev.rortega.orchardnotes.ui.editor.EditorToolbar
 import dev.rortega.orchardnotes.ui.editor.NoteEditor
 import dev.rortega.orchardnotes.ui.editor.RequestFocusOnce
+import dev.rortega.orchardnotes.ui.web.IcloudWebActivity
 
 /** What can be done to a note from its screen; implemented by the browser (navigation, undo). */
 data class NoteActions(
@@ -178,6 +180,11 @@ fun NotePane(
                                             onClick = { menuOpen = false; actions.trash(recordName) },
                                         )
                                     }
+                                    DropdownMenuItem(
+                                        text = { Text("Open in iCloud.com") },
+                                        leadingIcon = { Icon(Icons.Outlined.Language, contentDescription = null) },
+                                        onClick = { menuOpen = false; IcloudWebActivity.open(context) },
+                                    )
                                 }
                             }
                         }
@@ -215,9 +222,14 @@ fun NotePane(
                 NoteUiState.NotFound -> Message(Icons.Outlined.WarningAmber, "This note was deleted.")
                 is NoteUiState.Locked -> Message(
                     Icons.Outlined.Lock,
-                    "“${current.note.title.ifBlank { "This note" }}” is locked. Open it on your iPhone, iPad or Mac to view it.",
+                    "“${current.note.title.ifBlank { "This note" }}” is locked. You can unlock it with its password on iCloud.com, or on your Apple devices.",
+                    action = "Open in iCloud.com" to { IcloudWebActivity.open(context) },
                 )
-                is NoteUiState.Unavailable -> Message(Icons.Outlined.WarningAmber, current.reason)
+                is NoteUiState.Unavailable -> Message(
+                    Icons.Outlined.WarningAmber,
+                    current.reason,
+                    action = "Open in iCloud.com" to { IcloudWebActivity.open(context) },
+                )
                 is NoteUiState.Ready -> Column(
                     Modifier
                         .widthIn(max = 760.dp)
@@ -266,7 +278,7 @@ fun NotePane(
                         RequestFocusOnce(focusRequester)
                     } else {
                         if (!current.editable && current.readOnlyReason != null && current.note?.folderRecordName != SpecialFolders.TRASH) {
-                            ReadOnlyNotice(current.readOnlyReason)
+                            ReadOnlyNotice(current.readOnlyReason) { IcloudWebActivity.open(context) }
                         }
                         val body = @Composable {
                             NoteBody(
@@ -327,21 +339,31 @@ private fun SyncProblemBanner(message: String, onDiscard: () -> Unit, onSaveAsNe
 }
 
 @Composable
-private fun ReadOnlyNotice(reason: String) {
+private fun ReadOnlyNotice(reason: String, onOpenWeb: () -> Unit) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
     ) {
-        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Icon(Icons.Outlined.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
-            Text("Read-only: $reason", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Read-only: $reason",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onOpenWeb) { Text("Edit on iCloud.com") }
         }
     }
 }
 
 @Composable
-private fun Message(icon: ImageVector, text: String) {
+private fun Message(icon: ImageVector, text: String, action: Pair<String, () -> Unit>? = null) {
     Column(
         modifier = Modifier.widthIn(max = 420.dp).padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -349,6 +371,7 @@ private fun Message(icon: ImageVector, text: String) {
     ) {
         Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
         Text(text, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        action?.let { (label, onClick) -> TextButton(onClick = onClick) { Text(label) } }
     }
 }
 
