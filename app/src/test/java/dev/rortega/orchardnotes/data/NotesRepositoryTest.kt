@@ -46,12 +46,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 
-/**
- * Pushes and syncs that overlap other work: the next autosave landing mid-push, or what
- * started them going away (the note closing, the app leaving the screen) and cancelling
- * them part-way. None of it is a failure, and none of it may lose or repeat text.
- */
-class PushCancellationTest {
+/** Saving edits through the repository and pushing them to a fake iCloud. */
+class NotesRepositoryTest {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val server = MockWebServer()
     private val dao = FakeNotesDao()
@@ -65,10 +61,12 @@ class PushCancellationTest {
     private lateinit var writer: NoteWriter
     private lateinit var repository: NotesRepository
 
-    /** The note as iCloud has it. */
+    /** The note as iCloud has it (null: iCloud doesn't have it). */
     @Volatile private var serverBody: String? = null
     @Volatile private var serverTag = 1
-    private val writtenRecords = mutableListOf<String>()
+
+    /** Every write iCloud was sent: its operation type and record name. */
+    private val writes = mutableListOf<Pair<String, String>>()
 
     /** Requests to this endpoint are taken (a write is applied) but not answered until [answer] (a slow connection). */
     @Volatile private var held: String? = null
@@ -120,15 +118,20 @@ class PushCancellationTest {
 
     private fun respond(body: String) = MockResponse.Builder().code(200).body(body).build()
 
-    /** Applies a write the way CloudKit does: only on top of the current change tag. */
+    /** Applies a write the way CloudKit does: an update only on top of the current change tag, a create only of a new record. */
     private fun modify(body: JsonObject): MockResponse {
-        val record = body["operations"]!!.jsonArray[0].jsonObject["record"]!!.jsonObject
+        val operation = body["operations"]!!.jsonArray[0].jsonObject
+        val type = operation["operationType"]!!.jsonPrimitive.content
+        val record = operation["record"]!!.jsonObject
         val name = record["recordName"]!!.jsonPrimitive.content
-        synchronized(writtenRecords) { writtenRecords += name }
+        synchronized(writes) { writes += type to name }
         if (name == NOTE) {
-            if (record["recordChangeTag"]?.jsonPrimitive?.content != "tag-$serverTag") {
-                return respond("""{"records":[{"recordName":"$name","serverErrorCode":"CONFLICT","reason":"oplock"}]}""")
+            val refusal = when {
+                type == "create" && serverBody != null -> "EXISTS"
+                type != "create" && record["recordChangeTag"]?.jsonPrimitive?.content != "tag-$serverTag" -> "CONFLICT"
+                else -> null
             }
+            if (refusal != null) return respond("""{"records":[{"recordName":"$name","serverErrorCode":"$refusal"}]}""")
             serverBody = record["fields"]!!.jsonObject["TextDataEncrypted"]!!.jsonObject["value"]!!.jsonPrimitive.content
             serverTag++
         }
@@ -220,6 +223,11 @@ class PushCancellationTest {
         while (!check() && System.currentTimeMillis() < deadline) Thread.sleep(20)
     }
 
+    // --- pushes and syncs overlapping other work ------------------------------------
+    // The next autosave landing mid-push, or what started a push going away (the note
+    // closing, the app leaving the screen) and cancelling it part-way. None of it is a
+    // failure, and none of it may lose or repeat text.
+
     @Test
     fun savingAgainWhileThePreviousSaveIsOnItsWayToICloudDoesntFailIt() {
         noteOnICloud("Groceries", "milk", sharedBy = "_alex")
@@ -269,7 +277,7 @@ class PushCancellationTest {
         assertNull(pending()?.error)
         assertEquals(listOf("Groceries", "milk", "eggs and ham"), serverLines())
         // Our own first write wasn't mistaken for a change made elsewhere.
-        assertEquals(setOf(NOTE), synchronized(writtenRecords) { writtenRecords.toSet() })
+        assertEquals(setOf(NOTE), synchronized(writes) { writes.map { it.second }.toSet() })
         assertNull(repository.syncStatus.value.notice)
     }
 
@@ -321,6 +329,26 @@ class PushCancellationTest {
         join(sync)
 
         assertNull(repository.syncStatus.value.error)
+    }
+
+    // --- new notes -------------------------------------------------------------------
+
+    @Test
+    fun typingOnInANewNoteAfterICloudHasItUpdatesIt() {
+        // The first save of a note created here, then its push, creates it in iCloud...
+        onThread {
+            repository.saveDraft(NOTE, null, paragraphs("Groceries"), newNoteFolder = "FOLDER-1")
+            repository.pushPending()
+        }
+        // ...and its editor, still open, saves what was typed next.
+        onThread {
+            repository.saveDraft(NOTE, paragraphs("Groceries"), paragraphs("Groceries", "milk"), newNoteFolder = "FOLDER-1")
+            repository.pushPending()
+        }
+
+        assertNull(pending())
+        assertEquals(listOf("Groceries", "milk"), serverLines())
+        assertEquals(listOf("create" to NOTE, "update" to NOTE), synchronized(writes) { writes.toList() })
     }
 
     /** The fake DAO, where a read can be made to take a while (as a busy database's can). */

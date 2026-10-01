@@ -219,7 +219,8 @@ class NotesRepository(
     ): SavedDraft = writer.pendingLock.withLock {
         val existing = dao.getPending(recordName)
         val note = dao.getNote(recordName)
-        val isNew = existing?.isNew ?: (newNoteFolder != null)
+        // A note created here is new until iCloud has it; after that, its editor's saves are edits like any other.
+        val isNew = existing?.isNew ?: (newNoteFolder != null && note?.recordChangeTag == null)
         val server = if (isNew) null else note?.let(writer::serverParagraphs)
         val current = existing?.let { ParagraphMerge.withOffsets(writer.decodeParagraphs(it.desiredJson)) } ?: server
         val edited = ParagraphMerge.withOffsets(desired)
