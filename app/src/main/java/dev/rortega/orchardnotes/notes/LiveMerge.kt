@@ -76,8 +76,14 @@ object LiveMerge {
             emit(b.text[gap], style, paragraph)
         }
         oursOffsets[o.text.length] = out.length
+        // Every version ends with a virtual newline, so the output must too. Where the base ends
+        // with a newline of its own, the two can align either way round: if each side kept a
+        // different one, both are gone and the last paragraph would be lost with them.
+        if (out.lastOrNull() != '\n') {
+            val ourEnd = o.attributesAt(o.text.lastIndex)
+            emit('\n', InlineStyle.Plain, if (ourEnd != b.attributesAt(b.text.lastIndex)) ourEnd else t.attributesAt(t.text.lastIndex))
+        }
 
-        // Every version ends with a virtual newline that always survives, so the output does too.
         val paragraphs = mutableListOf<FormatParagraph>()
         var start = 0
         for (i in out.indices) {

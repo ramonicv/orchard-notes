@@ -88,6 +88,14 @@ class LiveMergeTest {
     }
 
     @Test
+    fun bothSidesDeletingTheLastEmptyLineKeepTheText() {
+        val base = lines("Groceries", "")
+        val result = merged(base, lines("Groceries list"), lines("Groceries"))
+        assertEquals("Groceries list", text(result))
+        assertEquals(1, result.size)
+    }
+
+    @Test
     fun checklistTickedElsewhereWhileTheItemIsBeingRetyped() {
         val base = doc(p("buy milk", ParagraphKind.Checklist))
         val ours = doc(p("buy oat milk", ParagraphKind.Checklist))
