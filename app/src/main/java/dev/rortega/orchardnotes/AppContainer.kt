@@ -38,7 +38,7 @@ class AppContainer(context: Context) {
     private val identityPrefs = appContext.getSharedPreferences("client_identity", Context.MODE_PRIVATE)
     private val sessionPrefs = appContext.getSharedPreferences("session", Context.MODE_PRIVATE)
 
-    val clientIdentity = ClientIdentity(appContext, identityPrefs)
+    val clientIdentity = ClientIdentity(identityPrefs)
 
     val httpClient: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(WebViewCookieJar())

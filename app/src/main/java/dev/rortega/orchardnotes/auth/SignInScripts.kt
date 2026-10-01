@@ -49,10 +49,11 @@ internal object SignInScripts {
             var xhr = this;
             xhr.addEventListener('load', function () {
               try {
-                if (xhr.status < 200 || xhr.status >= 300) return;
+                var url = xhr.responseURL || xhr.__orchardUrl;
+                if (xhr.status < 200 || xhr.status >= 300 || !pattern.test(url)) return;
                 var text = (xhr.responseType === '' || xhr.responseType === 'text')
                   ? xhr.responseText : JSON.stringify(xhr.response);
-                report(xhr.responseURL || xhr.__orchardUrl, text);
+                report(url, text);
               } catch (e) {}
             });
             return send.apply(this, arguments);

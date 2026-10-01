@@ -2,9 +2,9 @@ package dev.rortega.orchardnotes.ui.signin
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -45,8 +45,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import dev.rortega.orchardnotes.BuildConfig
 import dev.rortega.orchardnotes.auth.SignInScripts
 import dev.rortega.orchardnotes.ui.appContainer
+import dev.rortega.orchardnotes.ui.web.openOutsideIcloud
 
 /** Apple's own iCloud sign-in page, hosted in a WebView. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -121,6 +123,8 @@ private fun createSignInWebView(
     userAgent: String,
     onCanGoBackChanged: (Boolean) -> Unit,
 ): WebView {
+    // Debug builds: the page can be inspected from chrome://inspect on a connected computer.
+    if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
     val webView = WebView(context)
     with(webView.settings) {
         javaScriptEnabled = true
@@ -157,12 +161,8 @@ private fun createSignInWebView(
             return null
         }
 
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            val host = request.url.host ?: return true
-            if (isAppleHost(host)) return false
-            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, request.url)) }
-            return true
-        }
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+            openOutsideIcloud(context, request.url)
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             viewModel.onPageStarted()
@@ -181,13 +181,11 @@ private fun createSignInWebView(
             if (request.isForMainFrame) viewModel.onLoadError(error.description.toString())
         }
     }
+    // Without a WebChromeClient, WebView silently cancels the page's alert/confirm dialogs.
+    webView.webChromeClient = WebChromeClient()
     webView.loadUrl("$ICLOUD_ORIGIN/")
     return webView
 }
 
 private const val ICLOUD_ORIGIN = "https://www.icloud.com"
 private const val APPLE_SIGN_IN_ORIGIN = "https://idmsa.apple.com"
-
-private fun isAppleHost(host: String): Boolean =
-    listOf("apple.com", "icloud.com", "cdn-apple.com", "apple-cloudkit.com", "icloud-content.com")
-        .any { host == it || host.endsWith(".$it") }

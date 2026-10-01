@@ -105,14 +105,8 @@ class IcloudWebActivity : ComponentActivity() {
                 override fun onProgressChanged(view: WebView, newProgress: Int) = onProgress(newProgress)
             }
             webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    val host = request.url.host ?: return true
-                    val apple = listOf("apple.com", "icloud.com", "cdn-apple.com", "apple-cloudkit.com", "icloud-content.com")
-                        .any { host == it || host.endsWith(".$it") }
-                    if (apple) return false
-                    runCatching { startActivity(Intent(Intent.ACTION_VIEW, request.url)) }
-                    return true
-                }
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+                    openOutsideIcloud(this@IcloudWebActivity, request.url)
 
                 override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) = onHistory(view.canGoBack())
             }
