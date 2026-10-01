@@ -256,6 +256,7 @@ fun NotePane(
                     current.pending?.error?.let { error ->
                         SyncProblemBanner(
                             message = error,
+                            onRetry = viewModel::retrySaving,
                             onDiscard = viewModel::discardLocalChanges,
                             onSaveAsNew = { viewModel.saveLocalChangesAsNewNote(onOpenNote) },
                         )
@@ -330,7 +331,7 @@ private fun ConfirmPermanentDelete(onConfirm: () -> Unit, onDismiss: () -> Unit)
 }
 
 @Composable
-private fun SyncProblemBanner(message: String, onDiscard: () -> Unit, onSaveAsNew: () -> Unit) {
+private fun SyncProblemBanner(message: String, onRetry: () -> Unit, onDiscard: () -> Unit, onSaveAsNew: () -> Unit) {
     Surface(
         color = MaterialTheme.colorScheme.errorContainer,
         shape = RoundedCornerShape(12.dp),
@@ -339,6 +340,7 @@ private fun SyncProblemBanner(message: String, onDiscard: () -> Unit, onSaveAsNe
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Your changes couldn't be saved to iCloud", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onErrorContainer)
             Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer)
+            TextButton(onClick = onRetry) { Text("Try again") }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onSaveAsNew) { Text("Save as new note") }
                 TextButton(onClick = onDiscard) { Text("Discard changes") }

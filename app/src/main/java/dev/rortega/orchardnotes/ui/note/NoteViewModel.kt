@@ -201,6 +201,10 @@ class NoteViewModel(
         viewModelScope.launch { repository.saveDraft(recordName, ready.paragraphs, updated) }
     }
 
+    fun retrySaving() {
+        viewModelScope.launch { repository.retryPending(recordName) }
+    }
+
     fun discardLocalChanges() {
         viewModelScope.launch { repository.discardPending(recordName) }
     }

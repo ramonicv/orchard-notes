@@ -30,6 +30,7 @@ import mockwebserver3.RecordedRequest
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -387,6 +388,10 @@ class NoteWriterTest {
             assertTrue(path, path.contains("/production/shared/records/"))
             assertEquals("_alex", body["zoneID"]!!.jsonObject["ownerRecordName"]!!.jsonPrimitive.content)
         }
+        // Like the web client's shared-note updates: no record parent (iCloud refuses it there).
+        val record = requests.last().second["operations"]!!.jsonArray[0].jsonObject["record"]!!.jsonObject
+        assertFalse("parent" in record)
+        assertEquals("tag-1", record["recordChangeTag"]!!.jsonPrimitive.content)
         assertEquals(listOf(NotesZone("_alex")), appliedZones)
     }
 
@@ -417,6 +422,18 @@ class NoteWriterTest {
         assertTrue(writer.push("NOTE") is PushOutcome.Blocked)
         assertTrue(dao.pending["NOTE"]!!.blocked)
         assertTrue(dao.pending["NOTE"]!!.error!!.contains("view"))
+    }
+
+    @Test
+    fun aRefusalOfASharedNoteSaysWhyInICloudsWords() = runTest {
+        val base = paragraphs(title, eggs)
+        serverBody = serverNote(base)
+        dao.upsertNotes(listOf(cachedNote(zoneOwner = "_alex")))
+        pend(base, paragraphs(title, eggs, milk))
+        modifyError = "BAD_REQUEST"
+
+        assertTrue(writer.push("NOTE") is PushOutcome.Blocked)
+        assertEquals("iCloud refused the change to this shared note (BAD_REQUEST: denied).", dao.pending["NOTE"]!!.error)
     }
 
     @Test

@@ -225,7 +225,7 @@ class NoteWriter(
         }
 
         val fields = NoteFields.update(fresh, Base64.getEncoder().encodeToString(payload), targetText, System.currentTimeMillis())
-        return when (val result = modify(NoteFields.updateOperation(fresh, fields), zone)) {
+        return when (val result = modify(NoteFields.updateOperation(fresh, fields, withParent = !zone.isShared), zone)) {
             is ModifyResult.Saved -> {
                 applyRecords(listOf(result.record), zone)
                 finish(pending)
@@ -236,7 +236,7 @@ class NoteWriter(
                 in PERMISSION_ERRORS -> block(pending, "You can view this shared note but not edit it.")
                 in TRANSIENT_ERRORS -> throw TransientPushException("iCloud couldn't take the change right now ($code).")
                 else -> if (zone.isShared) {
-                    block(pending, "iCloud refused the change to this shared note ($code).")
+                    block(pending, "iCloud refused the change to this shared note ($code${result.error.reason?.let { ": $it" } ?: ""}).")
                 } else {
                     throw TransientPushException("iCloud rejected the change ($code).")
                 }

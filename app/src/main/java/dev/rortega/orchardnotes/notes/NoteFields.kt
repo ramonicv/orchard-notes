@@ -112,7 +112,12 @@ object NoteFields {
         )
     }
 
-    fun updateOperation(current: CkRecord, fields: JsonObject): JsonObject = buildJsonObject {
+    /**
+     * [withParent]: echo the record-hierarchy parent, as the web client does in its own
+     * zone. Its captured updates of notes in a sharer's zone leave the parent out, and
+     * iCloud refuses them (BAD_REQUEST) when it's there.
+     */
+    fun updateOperation(current: CkRecord, fields: JsonObject, withParent: Boolean = true): JsonObject = buildJsonObject {
         put("operationType", "update")
         put(
             "record",
@@ -121,7 +126,7 @@ object NoteFields {
                 put("recordType", current.recordType)
                 current.recordChangeTag?.let { put("recordChangeTag", it) }
                 put("fields", fields)
-                current.parentRecordName?.let { parent -> put("parent", buildJsonObject { put("recordName", parent) }) }
+                if (withParent) current.parentRecordName?.let { parent -> put("parent", buildJsonObject { put("recordName", parent) }) }
             },
         )
     }

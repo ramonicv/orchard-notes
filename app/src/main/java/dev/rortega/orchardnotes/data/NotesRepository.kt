@@ -283,6 +283,12 @@ class NotesRepository(
         saveDraft(recordName, base, desired, newNoteFolder)
     }
 
+    /** Pushes a local edit that couldn't be saved once more (after an update fixed the cause, say). */
+    suspend fun retryPending(recordName: String) {
+        dao.markPending(recordName, error = null, blocked = false)
+        schedulePush(delayMs = 0)
+    }
+
     /** Drops a local edit; the note goes back to what iCloud has. */
     suspend fun discardPending(recordName: String) {
         val pending = dao.getPending(recordName) ?: return
