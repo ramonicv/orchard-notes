@@ -1,6 +1,23 @@
 package dev.rortega.orchardnotes.ui.note
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import dev.rortega.orchardnotes.notes.doc.PlacedAttachment
+import dev.rortega.orchardnotes.ui.appContainer
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -54,6 +71,49 @@ enum class AttachmentKind(val label: String, val icon: ImageVector) {
         }
     }
 }
+
+/**
+ * An inline attachment: the picture itself for photos, drawings, scans and documents
+ * when iCloud has one, otherwise a labeled card.
+ */
+@Composable
+fun AttachmentView(attachment: PlacedAttachment, modifier: Modifier = Modifier) {
+    val kind = AttachmentKind.of(attachment.typeUti)
+    if (kind !in PICTURE_KINDS) {
+        AttachmentPlaceholder(attachment.typeUti, modifier)
+        return
+    }
+    val images = appContainer().attachmentImages
+    val maxWidth = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.roundToPx() }
+    val image by produceState<ImageState>(ImageState.Loading, attachment.identifier) {
+        value = runCatching { images.load(attachment.identifier, maxWidth) }.getOrNull()
+            ?.let { ImageState.Loaded(it.asImageBitmap()) } ?: ImageState.Missing
+    }
+    when (val current = image) {
+        ImageState.Loading -> Box(
+            modifier.fillMaxWidth().heightIn(min = 160.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            contentAlignment = Alignment.Center,
+        ) { CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp) }
+        ImageState.Missing -> AttachmentPlaceholder(attachment.typeUti, modifier)
+        is ImageState.Loaded -> Image(
+            bitmap = current.bitmap,
+            contentDescription = kind.label,
+            contentScale = ContentScale.FillWidth,
+            modifier = modifier
+                .fillMaxWidth()
+                .aspectRatio(current.bitmap.width.toFloat() / current.bitmap.height.coerceAtLeast(1))
+                .clip(RoundedCornerShape(10.dp)),
+        )
+    }
+}
+
+private sealed interface ImageState {
+    data object Loading : ImageState
+    data object Missing : ImageState
+    data class Loaded(val bitmap: ImageBitmap) : ImageState
+}
+
+private val PICTURE_KINDS = setOf(AttachmentKind.Image, AttachmentKind.Drawing, AttachmentKind.Scan, AttachmentKind.Pdf)
 
 /** A labeled card standing in for an attachment this app can't display inline. */
 @Composable

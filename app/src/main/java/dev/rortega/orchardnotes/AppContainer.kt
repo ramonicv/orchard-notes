@@ -8,6 +8,7 @@ import dev.rortega.orchardnotes.cloudkit.CloudKitClient
 import dev.rortega.orchardnotes.cloudkit.IcloudHeadersInterceptor
 import dev.rortega.orchardnotes.cloudkit.SetupClient
 import androidx.core.content.edit
+import dev.rortega.orchardnotes.data.AttachmentImages
 import dev.rortega.orchardnotes.data.NoteWriter
 import dev.rortega.orchardnotes.data.NotesDatabase
 import dev.rortega.orchardnotes.data.PushWorker
@@ -51,10 +52,15 @@ class AppContainer(context: Context) {
     val sessionManager: SessionManager = SessionManager(
         prefs = sessionPrefs,
         setupClient = setupClient,
-        onSignedOut = { notesRepository.clear() },
+        onSignedOut = {
+            notesRepository.clear()
+            attachmentImages.clear()
+        },
     )
 
     val cloudKit: CloudKitClient = CloudKitClient(httpClient, json, clientIdentity) { sessionManager.account }
+
+    val attachmentImages: AttachmentImages by lazy { AttachmentImages(cloudKit, java.io.File(appContext.cacheDir, "attachments")) }
 
     private val database = NotesDatabase.create(appContext)
     private val syncPrefs = appContext.getSharedPreferences("sync", Context.MODE_PRIVATE)

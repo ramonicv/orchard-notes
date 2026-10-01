@@ -78,3 +78,14 @@ class NoteRecordsTest {
         assertEquals(FolderEntity("F2", "Recipes", "F1"), folder)
     }
 }
+
+class AttachmentImagesTest {
+    @Test
+    fun assetUrlsFillInCloudKitsFilenamePlaceholder() {
+        val value = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"downloadURL":"https://cvws.icloud-content.com/B/AbC/${'$'}{f}?o=x","fileChecksum":"c"}""",
+        )
+        assertEquals("https://cvws.icloud-content.com/B/AbC/file?o=x", AttachmentImages.assetUrl(value))
+        assertEquals(null, AttachmentImages.assetUrl(kotlinx.serialization.json.Json.parseToJsonElement("""{"recordName":"R"}""")))
+    }
+}

@@ -273,7 +273,7 @@ fun NotePane(
                                 content = current.content,
                                 paragraphs = current.paragraphs,
                                 onToggleChecklist = if (current.editable) viewModel::toggleChecklist else null,
-                                attachment = { AttachmentPlaceholder(it.typeUti) },
+                                attachment = { AttachmentView(it) },
                                 onTextTap = if (current.editable) { offset -> viewModel.startEditing(offset) } else null,
                             )
                         }
