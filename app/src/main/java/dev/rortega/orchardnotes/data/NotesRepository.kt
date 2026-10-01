@@ -10,11 +10,14 @@ import dev.rortega.orchardnotes.notes.ParagraphMerge
 import dev.rortega.orchardnotes.notes.doc.FormatParagraph
 import dev.rortega.orchardnotes.notes.doc.NoteContent
 import dev.rortega.orchardnotes.notes.doc.NoteFormat
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -63,7 +66,9 @@ class NotesRepository(
     private val _syncStatus = MutableStateFlow(SyncStatus())
     val syncStatus: StateFlow<SyncStatus> = _syncStatus.asStateFlow()
     private var syncJob: Job? = null
-    private var pushJob: Job? = null
+
+    /** The wait before a scheduled push (see [schedulePush]). */
+    private var pushWait: Job? = null
 
     /** Held while pushing or applying pulled changes. */
     private val pushMutex = Mutex()
@@ -123,6 +128,10 @@ class NotesRepository(
             _syncStatus.update { it.copy(syncing = false, error = "Your iCloud session expired. Sign in again to sync.") }
         } catch (e: java.io.IOException) {
             _syncStatus.update { it.copy(syncing = false, offline = true) }
+        } catch (e: CancellationException) {
+            // Stopped (the app left the screen, say), not failed.
+            _syncStatus.update { it.copy(syncing = false) }
+            throw e
         } catch (e: Exception) {
             _syncStatus.update { it.copy(syncing = false, error = e.message ?: "Sync failed.") }
         }
@@ -187,6 +196,8 @@ class NotesRepository(
         } catch (e: java.io.IOException) {
             _syncStatus.update { it.copy(offline = true) }
             false
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             false
         }
@@ -383,16 +394,22 @@ class NotesRepository(
         dao.deleteNotes(listOf(recordName))
     }
 
-    /** Pushes soon, coalescing bursts of edits (typing) into one write. */
+    /**
+     * Pushes soon, coalescing bursts of edits (typing) into one write. A newer request only
+     * restarts the wait: a push already under way is never cut short, and this one follows it.
+     */
     fun schedulePush(delayMs: Long = PUSH_DEBOUNCE_MS) {
-        pushJob?.cancel()
-        pushJob = scope.launch {
+        pushWait?.cancel()
+        pushWait = scope.launch {
             delay(delayMs)
-            pushPending()
+            scope.launch { pushPending() }
         }
     }
 
-    /** Pushes every pending edit that can be pushed. Safe to call from anywhere, any time. */
+    /**
+     * Pushes every pending edit that can be pushed. Safe to call from anywhere, any time.
+     * Cancelling it stops it between notes; edits not yet pushed stay queued as they were.
+     */
     suspend fun pushPending(): Boolean = pushMutex.withLock {
         if (sessionManager.account == null) return@withLock false
         var allPushed = true
@@ -401,6 +418,7 @@ class NotesRepository(
         val (folderCreates, otherOps) = ops.partition { it.type == PendingOpEntity.CREATE_FOLDER }
         if (!pushOps(folderCreates)) return@withLock false
         for (pending in dao.pushablePending()) {
+            currentCoroutineContext().ensureActive()
             try {
                 when (val outcome = writer.push(pending.recordName)) {
                     is PushOutcome.SavedAsCopy -> _syncStatus.update {
@@ -417,6 +435,9 @@ class NotesRepository(
                 _syncStatus.update { it.copy(offline = true) }
                 schedulePushWhenOnline()
                 return@withLock false
+            } catch (e: CancellationException) {
+                // Stopped, not failed: never a reason to hold the edit back for the user.
+                throw e
             } catch (e: Exception) {
                 dao.markPending(pending.recordName, e.message ?: "Couldn't save this note to iCloud.", blocked = true)
                 allPushed = false
@@ -428,6 +449,7 @@ class NotesRepository(
     /** Pushes queued operations in order; false if iCloud couldn't be reached. */
     private suspend fun pushOps(ops: List<PendingOpEntity>): Boolean {
         for (op in ops) {
+            currentCoroutineContext().ensureActive()
             try {
                 writer.pushOp(op)
             } catch (e: SessionExpiredException) {
@@ -437,6 +459,8 @@ class NotesRepository(
                 _syncStatus.update { it.copy(offline = true) }
                 schedulePushWhenOnline()
                 return false
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 dao.markOp(op.type, op.recordName, e.message ?: "Couldn't apply this change in iCloud.")
             }
@@ -446,8 +470,9 @@ class NotesRepository(
 
     suspend fun clear() {
         syncJob?.cancel()
-        pushJob?.cancel()
-        sync.reset()
+        pushWait?.cancel()
+        // After any push under way, which runs to the end: nothing it brings back lands after the reset.
+        pushMutex.withLock { sync.reset() }
         _syncStatus.value = SyncStatus()
     }
 
