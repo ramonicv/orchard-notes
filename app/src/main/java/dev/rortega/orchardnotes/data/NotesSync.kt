@@ -28,7 +28,7 @@ class NotesSync(
             // An unusable sync token surfaces as a zone-level BAD_REQUEST: refetch from scratch.
             if (storedToken == null || e.serverErrorCode != "BAD_REQUEST") throw e
             prefs.edit { remove(KEY_SYNC_TOKEN) }
-            dao.clearAll()
+            dao.clearAll(includingPending = false)
             pull(null)
         }
     }
@@ -36,9 +36,10 @@ class NotesSync(
     /** Applies records that came back from our own writes, without waiting for the next sync. */
     suspend fun applyRecords(records: List<CkRecord>) = apply(records)
 
+    /** Forgets everything, including unsaved local edits (used on sign-out). */
     suspend fun reset() = mutex.withLock {
         prefs.edit { remove(KEY_SYNC_TOKEN) }
-        dao.clearAll()
+        dao.clearAll(includingPending = true)
     }
 
     private suspend fun pull(startToken: String?): Int {

@@ -51,3 +51,25 @@ data class FolderCount(
     @ColumnInfo(name = "folderRecordName") val folderRecordName: String?,
     @ColumnInfo(name = "count") val count: Int,
 )
+
+/**
+ * A local edit not yet confirmed by iCloud. Saved before any network call, so edits
+ * survive being offline or the app closing. [baseJson] is the formatted content the edit
+ * started from (null for a note created here), used to merge with changes made elsewhere.
+ */
+@Entity(tableName = "pending_edits")
+data class PendingEditEntity(
+    @PrimaryKey val recordName: String,
+    val isNew: Boolean,
+    val folderRecordName: String?,
+    val baseJson: String?,
+    val desiredJson: String,
+    val title: String,
+    val snippet: String,
+    val plainText: String,
+    val updatedAt: Long,
+    /** Why the last push failed, when it needs the user's attention. */
+    val error: String? = null,
+    /** Pushing can't succeed without the user deciding what to do (see [error]). */
+    val blocked: Boolean = false,
+)

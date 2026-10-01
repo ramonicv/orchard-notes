@@ -1,5 +1,7 @@
 package dev.rortega.orchardnotes.notes.doc
 
+import kotlinx.serialization.Serializable
+
 /*
  * The semantic formatting model between Apple's attribute runs and this app's UI.
  *
@@ -33,6 +35,7 @@ enum class ParagraphKind(val wireStyle: Int) {
     }
 }
 
+@Serializable
 data class InlineStyle(
     val bold: Boolean = false,
     val italic: Boolean = false,
@@ -46,8 +49,10 @@ data class InlineStyle(
     }
 }
 
+@Serializable
 data class InlineSpan(val length: Int, val style: InlineStyle)
 
+@Serializable
 data class FormatParagraph(
     val kind: ParagraphKind,
     /** List nesting depth (0 = top level). */

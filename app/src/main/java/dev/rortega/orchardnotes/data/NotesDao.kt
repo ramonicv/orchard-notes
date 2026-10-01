@@ -26,6 +26,9 @@ interface NotesDao {
     @Query("DELETE FROM notes")
     suspend fun clearNotes()
 
+    @Query("DELETE FROM notes WHERE recordName NOT IN (SELECT recordName FROM pending_edits)")
+    suspend fun clearNotesWithoutPendingEdits()
+
     @Query("DELETE FROM folders")
     suspend fun clearFolders()
 
@@ -43,11 +46,60 @@ interface NotesDao {
         }
         if (folders.isNotEmpty()) upsertFolders(folders)
         if (notes.isNotEmpty()) upsertNotes(notes)
+        overlayPendingEdits()
     }
 
+    /** Keeps list rows showing local, not-yet-pushed edits after server data lands. */
+    @Query(
+        "UPDATE notes SET " +
+            "title = (SELECT p.title FROM pending_edits p WHERE p.recordName = notes.recordName), " +
+            "snippet = (SELECT p.snippet FROM pending_edits p WHERE p.recordName = notes.recordName), " +
+            "plainText = (SELECT p.plainText FROM pending_edits p WHERE p.recordName = notes.recordName), " +
+            "modificationDate = MAX(modificationDate, (SELECT p.updatedAt FROM pending_edits p WHERE p.recordName = notes.recordName)) " +
+            "WHERE recordName IN (SELECT recordName FROM pending_edits)",
+    )
+    suspend fun overlayPendingEdits()
+
+    @Upsert
+    suspend fun upsertPending(edit: PendingEditEntity)
+
+    @Query("SELECT * FROM pending_edits WHERE recordName = :recordName")
+    suspend fun getPending(recordName: String): PendingEditEntity?
+
+    @Query("SELECT * FROM pending_edits WHERE recordName = :recordName")
+    fun observePending(recordName: String): Flow<PendingEditEntity?>
+
+    @Query("SELECT * FROM pending_edits WHERE blocked = 0 ORDER BY updatedAt")
+    suspend fun pushablePending(): List<PendingEditEntity>
+
+    @Query("SELECT COUNT(*) FROM pending_edits")
+    fun observePendingCount(): Flow<Int>
+
+    @Query("DELETE FROM pending_edits WHERE recordName = :recordName")
+    suspend fun deletePending(recordName: String)
+
+    /** Removes a pending edit only if no newer local edit replaced it while it was being pushed. */
+    @Query("DELETE FROM pending_edits WHERE recordName = :recordName AND updatedAt = :updatedAt")
+    suspend fun deletePendingIfUnchanged(recordName: String, updatedAt: Long): Int
+
+    @Query("UPDATE pending_edits SET error = :error, blocked = :blocked WHERE recordName = :recordName")
+    suspend fun markPending(recordName: String, error: String?, blocked: Boolean)
+
+    @Query("UPDATE pending_edits SET isNew = 0 WHERE recordName = :recordName")
+    suspend fun markPendingCreated(recordName: String)
+
+    @Query("DELETE FROM pending_edits")
+    suspend fun clearPending()
+
+    /** Clears the server cache. Pending local edits are kept unless [includingPending]. */
     @Transaction
-    suspend fun clearAll() {
-        clearNotes()
+    suspend fun clearAll(includingPending: Boolean = false) {
+        if (includingPending) {
+            clearPending()
+            clearNotes()
+        } else {
+            clearNotesWithoutPendingEdits()
+        }
         clearFolders()
     }
 
