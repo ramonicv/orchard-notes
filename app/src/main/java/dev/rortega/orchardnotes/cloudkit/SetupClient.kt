@@ -1,6 +1,6 @@
 package dev.rortega.orchardnotes.cloudkit
 
-import dev.rortega.orchardnotes.auth.ClientIdentity
+import dev.rortega.orchardnotes.auth.ClientParams
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -44,7 +44,7 @@ sealed interface ValidateResult {
 class SetupClient(
     private val http: OkHttpClient,
     private val json: Json,
-    private val identity: ClientIdentity,
+    private val identity: ClientParams,
 ) {
     suspend fun validate(): ValidateResult = withContext(Dispatchers.IO) {
         val url = "$SETUP_HOST/setup/ws/1/validate".toHttpUrl().newBuilder()

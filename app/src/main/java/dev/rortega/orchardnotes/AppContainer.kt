@@ -4,8 +4,12 @@ import android.content.Context
 import dev.rortega.orchardnotes.auth.ClientIdentity
 import dev.rortega.orchardnotes.auth.SessionManager
 import dev.rortega.orchardnotes.auth.WebViewCookieJar
+import dev.rortega.orchardnotes.cloudkit.CloudKitClient
 import dev.rortega.orchardnotes.cloudkit.IcloudHeadersInterceptor
 import dev.rortega.orchardnotes.cloudkit.SetupClient
+import dev.rortega.orchardnotes.data.NotesDatabase
+import dev.rortega.orchardnotes.data.NotesRepository
+import dev.rortega.orchardnotes.data.NotesSync
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -39,9 +43,18 @@ class AppContainer(context: Context) {
 
     val setupClient = SetupClient(httpClient, json, clientIdentity)
 
-    val sessionManager = SessionManager(
+    val sessionManager: SessionManager = SessionManager(
         prefs = sessionPrefs,
         setupClient = setupClient,
-        onSignedOut = { },
+        onSignedOut = { notesRepository.clear() },
     )
+
+    val cloudKit: CloudKitClient = CloudKitClient(httpClient, json, clientIdentity) { sessionManager.account }
+
+    private val database = NotesDatabase.create(appContext)
+    private val syncPrefs = appContext.getSharedPreferences("sync", Context.MODE_PRIVATE)
+
+    val notesSync: NotesSync = NotesSync(cloudKit, database.notesDao(), syncPrefs)
+
+    val notesRepository: NotesRepository = NotesRepository(database.notesDao(), notesSync, sessionManager, appScope)
 }

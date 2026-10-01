@@ -1,0 +1,148 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "250f642a173e738a207a2834f2fbc3ee",
+    "entities": [
+      {
+        "tableName": "notes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recordName` TEXT NOT NULL, `folderRecordName` TEXT, `title` TEXT NOT NULL, `snippet` TEXT NOT NULL, `plainText` TEXT NOT NULL, `textData` TEXT, `creationDate` INTEGER NOT NULL, `modificationDate` INTEGER NOT NULL, `isPinned` INTEGER NOT NULL, `recordChangeTag` TEXT, `firstAttachmentUti` TEXT, `isLocked` INTEGER NOT NULL, `bodyUnavailable` INTEGER NOT NULL, PRIMARY KEY(`recordName`))",
+        "fields": [
+          {
+            "fieldPath": "recordName",
+            "columnName": "recordName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderRecordName",
+            "columnName": "folderRecordName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "snippet",
+            "columnName": "snippet",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "plainText",
+            "columnName": "plainText",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "textData",
+            "columnName": "textData",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "creationDate",
+            "columnName": "creationDate",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modificationDate",
+            "columnName": "modificationDate",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isPinned",
+            "columnName": "isPinned",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recordChangeTag",
+            "columnName": "recordChangeTag",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "firstAttachmentUti",
+            "columnName": "firstAttachmentUti",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "isLocked",
+            "columnName": "isLocked",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bodyUnavailable",
+            "columnName": "bodyUnavailable",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "recordName"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_notes_folderRecordName",
+            "unique": false,
+            "columnNames": [
+              "folderRecordName"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_notes_folderRecordName` ON `${TABLE_NAME}` (`folderRecordName`)"
+          },
+          {
+            "name": "index_notes_modificationDate",
+            "unique": false,
+            "columnNames": [
+              "modificationDate"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_notes_modificationDate` ON `${TABLE_NAME}` (`modificationDate`)"
+          }
+        ]
+      },
+      {
+        "tableName": "folders",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`recordName` TEXT NOT NULL, `title` TEXT NOT NULL, `parentRecordName` TEXT, PRIMARY KEY(`recordName`))",
+        "fields": [
+          {
+            "fieldPath": "recordName",
+            "columnName": "recordName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "parentRecordName",
+            "columnName": "parentRecordName",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "recordName"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '250f642a173e738a207a2834f2fbc3ee')"
+    ]
+  }
+}

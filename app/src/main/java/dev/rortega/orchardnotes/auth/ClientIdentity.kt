@@ -7,6 +7,13 @@ import androidx.core.content.edit
 import java.util.Locale
 import java.util.UUID
 
+/** The identifying query parameters the www.icloud.com web client sends with every call. */
+interface ClientParams {
+    val clientId: String
+    val clientBuildNumber: String
+    val clientMasteringNumber: String
+}
+
 /**
  * How this app identifies itself to iCloud's web services: the same query
  * parameters the www.icloud.com web client sends, plus a browser-like User-Agent
@@ -17,19 +24,19 @@ import java.util.UUID
  * sends, so they follow Apple's web client releases; the defaults are only used
  * until the first sign-in.
  */
-class ClientIdentity(context: Context, private val prefs: SharedPreferences) {
+class ClientIdentity(context: Context, private val prefs: SharedPreferences) : ClientParams {
 
     val userAgent: String = browserUserAgent(context)
 
-    val clientId: String
+    override val clientId: String
         get() = prefs.getString(KEY_CLIENT_ID, null) ?: UUID.randomUUID().toString().uppercase(Locale.ROOT).also {
             prefs.edit { putString(KEY_CLIENT_ID, it) }
         }
 
-    val clientBuildNumber: String
+    override val clientBuildNumber: String
         get() = prefs.getString(KEY_BUILD, null) ?: DEFAULT_CLIENT_BUILD_NUMBER
 
-    val clientMasteringNumber: String
+    override val clientMasteringNumber: String
         get() = prefs.getString(KEY_MASTERING, null) ?: DEFAULT_CLIENT_MASTERING_NUMBER
 
     /** Records the web client's identifiers observed on a setup.icloud.com request URL. */
