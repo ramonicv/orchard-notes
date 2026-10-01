@@ -82,9 +82,13 @@ class NoteViewModel(
     private var lastSaved: List<FormatParagraph>? = null
     private var saveJob: Job? = null
 
+    /** Only an editing session has content to save; the editor's initial state must never be written. */
+    private var sessionActive = false
+
     init {
         if (newNoteFolder != null) {
             _editing.value = true
+            sessionActive = true
             lastSaved = EditorState.newNote().toParagraphs()
         }
         // Once our edit reaches iCloud, later edits in this session build on what was pushed.
@@ -106,12 +110,14 @@ class NoteViewModel(
         _editor.value = editorState
         val at = (cursor ?: editorState.text.length).coerceIn(0, editorState.text.length)
         _value.value = TextFieldValue(editorState.text, TextRange(at))
+        sessionActive = true
         _editing.value = true
     }
 
     fun stopEditing() {
         if (!_editing.value) return
         saveNow()
+        sessionActive = false
         _editing.value = false
     }
 
@@ -162,6 +168,7 @@ class NoteViewModel(
     /** Persists the editor's content right away (leaving the note, app going to background). */
     fun saveNow() {
         saveJob?.cancel()
+        if (!sessionActive) return
         val desired = _editor.value.toParagraphs()
         if (!shouldSave(desired)) return
         lastSaved = desired
@@ -169,7 +176,7 @@ class NoteViewModel(
     }
 
     override fun onCleared() {
-        if (_editing.value) saveNow()
+        saveNow()
     }
 
     private fun scheduleSave() {
