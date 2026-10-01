@@ -5,6 +5,22 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Published releases (docs/releasing.md): the release workflow passes the version from the tag
+// and the project's release key as Gradle properties. Local builds keep the defaults below.
+val releaseVersion: String? = providers.gradleProperty("orchardVersion").orNull
+val releaseKeystore: String? = providers.gradleProperty("orchardKeystoreFile").orNull
+
+/** 1.2.3 -> 1002003: each release gets a higher code than the last, which Android requires to update. */
+fun versionCodeOf(version: String): Int {
+    val parts = Regex("""(\d{1,3})\.(\d{1,3})\.(\d{1,3})""").matchEntire(version)?.groupValues?.drop(1)?.map(String::toInt)
+        ?: throw GradleException("orchardVersion must look like 1.2.3, not '$version'")
+    val (major, minor, patch) = parts
+    return major * 1_000_000 + minor * 1_000 + patch
+}
+
+fun signingProperty(name: String): String = providers.gradleProperty(name).orNull
+    ?: throw GradleException("$name is required when orchardKeystoreFile is set")
+
 android {
     namespace = "dev.rortega.orchardnotes"
     compileSdk = 37
@@ -13,8 +29,19 @@ android {
         applicationId = "dev.rortega.orchardnotes"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = releaseVersion?.let(::versionCodeOf) ?: 1
+        versionName = releaseVersion ?: "0.1.0"
+    }
+
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = signingProperty("orchardKeystorePassword")
+                keyAlias = signingProperty("orchardKeyAlias")
+                keyPassword = signingProperty("orchardKeyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -22,8 +49,9 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Sideloaded personal build: sign release with the debug key so it installs without extra setup.
-            signingConfig = signingConfigs.getByName("debug")
+            // Without the release key (any build but a published release), sign with the debug key so
+            // the APK still installs for personal sideloading.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
     compileOptions {

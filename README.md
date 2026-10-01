@@ -34,6 +34,12 @@ An Android app for reading and editing your Apple Notes through your iCloud acco
 
 ## Install
 
+On your Android phone, open the [latest release](https://github.com/ramonicv/orchard-notes/releases/latest), download the `orchard-notes-v….apk` file and open it. The first time, Android asks you to allow your browser to install apps; Google Play Protect may also warn that the app is from an unknown developer, which is expected for apps from outside the Play Store.
+
+To update, install a newer release's APK the same way: it installs over the old one and keeps your sign-in and notes. To get updates automatically, add this repository's URL to [Obtainium](https://github.com/ImranR98/Obtainium).
+
+### Build it yourself
+
 Build a debug APK and install it over USB:
 
 ```bash
@@ -41,7 +47,7 @@ Build a debug APK and install it over USB:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Building needs JDK 17+ and the Android SDK with platform 37 (Android Studio's defaults are fine; set `sdk.dir` in `local.properties` if the SDK is elsewhere). `./gradlew assembleRelease` produces a minified build signed with the local debug key, for personal sideloading.
+Building needs JDK 17+ and the Android SDK with platform 37 (Android Studio's defaults are fine; set `sdk.dir` in `local.properties` if the SDK is elsewhere). `./gradlew assembleRelease` produces a minified build, signed with the local debug key unless the release key is configured ([Releasing](docs/releasing.md)). Builds signed with a debug key and releases can't be installed over each other: uninstall first when switching.
 
 To install on a phone: enable *Developer options* (Settings > About phone > Software information > tap *Build number* seven times), turn on *USB debugging*, connect the phone, accept the prompt on it, and run the `adb install` line above.
 
