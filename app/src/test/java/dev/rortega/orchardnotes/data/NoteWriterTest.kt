@@ -4,6 +4,7 @@ import dev.rortega.orchardnotes.auth.ClientParams
 import dev.rortega.orchardnotes.cloudkit.CkRecord
 import dev.rortega.orchardnotes.cloudkit.CloudKitClient
 import dev.rortega.orchardnotes.cloudkit.IcloudAccount
+import dev.rortega.orchardnotes.cloudkit.NotesZone
 import dev.rortega.orchardnotes.notes.doc.AttachmentInfo
 import dev.rortega.orchardnotes.notes.doc.FormatParagraph
 import dev.rortega.orchardnotes.notes.doc.FormatReconcile
@@ -29,6 +30,7 @@ import mockwebserver3.RecordedRequest
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -40,6 +42,13 @@ class NoteWriterTest {
     private val server = MockWebServer()
     private val dao = FakeNotesDao()
     private val applied = mutableListOf<CkRecord>()
+    private val appliedZones = mutableListOf<NotesZone>()
+
+    /** Every request: its path and JSON body. */
+    private val requests = mutableListOf<Pair<String, JsonObject>>()
+
+    /** When set, records/modify answers with this per-record error. */
+    private var modifyError: String? = null
     private val ourReplica = ByteArray(16) { 0x42 }
     private val deviceReplica = ByteArray(16) { 0x13 }
     private lateinit var writer: NoteWriter
@@ -61,6 +70,10 @@ class NoteWriterTest {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path = request.url.encodedPath
+                requests += path to json.parseToJsonElement(request.body!!.utf8()).jsonObject
+                modifyError?.takeIf { path.endsWith("records/modify") }?.let { code ->
+                    return respond("""{"records":[{"recordName":"NOTE","serverErrorCode":"$code","reason":"denied"}]}""")
+                }
                 return when {
                     path.endsWith("records/lookup") -> respond(
                         serverBody?.let { """{"records":[${recordJson("NOTE", it, serverTag)}]}""" }
@@ -93,7 +106,10 @@ class NoteWriterTest {
         server.start()
         val account = IcloudAccount("1", "a", null, server.url("/").toString().trimEnd('/'))
         val client = CloudKitClient(OkHttpClient(), json, Params) { account }
-        writer = NoteWriter(client, dao, { applied += it }, json) { ourReplica }
+        writer = NoteWriter(client, dao, { records, zone ->
+            applied += records
+            appliedZones += zone
+        }, json) { ourReplica }
     }
 
     @After
@@ -125,10 +141,16 @@ class NoteWriterTest {
         return Base64.getEncoder().encodeToString(NoteCompression.compress(doc.encode()))
     }
 
-    private suspend fun pend(base: List<FormatParagraph>?, desired: List<FormatParagraph>, isNew: Boolean = false, name: String = "NOTE") =
+    private suspend fun pend(
+        base: List<FormatParagraph>?,
+        desired: List<FormatParagraph>,
+        isNew: Boolean = false,
+        name: String = "NOTE",
+        folder: String = "DefaultFolder-CloudKit",
+    ) =
         dao.upsertPending(
             PendingEditEntity(
-                recordName = name, isNew = isNew, folderRecordName = "DefaultFolder-CloudKit",
+                recordName = name, isNew = isNew, folderRecordName = folder,
                 baseJson = base?.let(writer::encodeParagraphs), desiredJson = writer.encodeParagraphs(desired),
                 title = "", snippet = "", plainText = "", updatedAt = 1,
             ),
@@ -342,5 +364,120 @@ class NoteWriterTest {
         assertEquals("Recipes", String(Base64.getDecoder().decode(field(sent, "TitleEncrypted")!!.jsonPrimitive.content)))
         assertEquals("FOLDER-1", field(sent, "ParentFolder")!!.jsonObject["recordName"]!!.jsonPrimitive.content)
         assertEquals("Folder", applied.single().recordType)
+    }
+
+    // --- shared notes -------------------------------------------------------------------
+
+    private fun cachedNote(name: String = "NOTE", zoneOwner: String? = null, share: String? = null, textData: String? = null) = NoteEntity(
+        recordName = name, folderRecordName = "DefaultFolder-CloudKit", title = "", snippet = "", plainText = "",
+        textData = textData, creationDate = 0, modificationDate = 0, isPinned = false, recordChangeTag = "tag-1",
+        firstAttachmentUti = null, isLocked = false, bodyUnavailable = false, zoneOwner = zoneOwner, shareRecordName = share,
+    )
+
+    @Test
+    fun notesSharedWithMeAreWrittenInTheSharersZone() = runTest {
+        val base = paragraphs(title, eggs)
+        serverBody = serverNote(base)
+        dao.upsertNotes(listOf(cachedNote(zoneOwner = "_alex")))
+        pend(base, paragraphs(title, eggs, milk))
+
+        assertEquals(PushOutcome.Pushed, writer.push("NOTE"))
+
+        assertEquals(listOf("lookup", "modify"), requests.map { it.first.substringAfterLast('/') })
+        for ((path, body) in requests) {
+            assertTrue(path, path.contains("/production/shared/records/"))
+            assertEquals("_alex", body["zoneID"]!!.jsonObject["ownerRecordName"]!!.jsonPrimitive.content)
+        }
+        // Like the web client's shared-note updates: no record parent (iCloud refuses it there).
+        val record = requests.last().second["operations"]!!.jsonArray[0].jsonObject["record"]!!.jsonObject
+        assertFalse("parent" in record)
+        assertEquals("tag-1", record["recordChangeTag"]!!.jsonPrimitive.content)
+        assertEquals(listOf(NotesZone("_alex")), appliedZones)
+    }
+
+    @Test
+    fun overlappingChangesToASharedNoteMergeInsteadOfMakingACopy() = runTest {
+        val base = paragraphs(title, eggs)
+        serverBody = serverNote(paragraphs(title, "eggs (dozen)" to ParagraphKind.Checklist))
+        // Shared by this account: in its own zone, but others edit it too.
+        dao.upsertNotes(listOf(cachedNote(share = "SHARE-1")))
+        pend(base, paragraphs(title, "eggs (6)" to ParagraphKind.Checklist))
+
+        assertEquals(PushOutcome.Pushed, writer.push("NOTE"))
+
+        val (op, content) = uploaded()
+        assertEquals("update", op["operationType"]!!.jsonPrimitive.content)
+        assertEquals(listOf(title, "eggs (dozen) (6)" to ParagraphKind.Checklist), kinds(content))
+        assertEquals(1, modifyBodies.size)
+    }
+
+    @Test
+    fun aSharedNoteICanOnlyViewBlocksInsteadOfRetrying() = runTest {
+        val base = paragraphs(title, eggs)
+        serverBody = serverNote(base)
+        dao.upsertNotes(listOf(cachedNote(zoneOwner = "_alex")))
+        pend(base, paragraphs(title, eggs, milk))
+        modifyError = "ACCESS_DENIED"
+
+        assertTrue(writer.push("NOTE") is PushOutcome.Blocked)
+        assertTrue(dao.pending["NOTE"]!!.blocked)
+        assertTrue(dao.pending["NOTE"]!!.error!!.contains("view"))
+    }
+
+    @Test
+    fun aRefusalOfASharedNoteSaysWhyInICloudsWords() = runTest {
+        val base = paragraphs(title, eggs)
+        serverBody = serverNote(base)
+        dao.upsertNotes(listOf(cachedNote(zoneOwner = "_alex")))
+        pend(base, paragraphs(title, eggs, milk))
+        modifyError = "BAD_REQUEST"
+
+        assertTrue(writer.push("NOTE") is PushOutcome.Blocked)
+        assertEquals("iCloud refused the change to this shared note (BAD_REQUEST: denied).", dao.pending["NOTE"]!!.error)
+    }
+
+    @Test
+    fun newNotesInASharedFolderAreCreatedUnderItInTheSharersZone() = runTest {
+        dao.upsertFolders(listOf(FolderEntity("FOLDER-1", "Trip", null, zoneOwner = "_alex", shareRecordName = "SHARE-1")))
+        pend(null, paragraphs(title, eggs), isNew = true, name = "NEW-2", folder = "FOLDER-1")
+
+        assertEquals(PushOutcome.Pushed, writer.push("NEW-2"))
+
+        val (path, body) = requests.single()
+        assertTrue(path.endsWith("/production/shared/records/modify"))
+        assertEquals("_alex", body["zoneID"]!!.jsonObject["ownerRecordName"]!!.jsonPrimitive.content)
+        val record = body["operations"]!!.jsonArray[0].jsonObject["record"]!!.jsonObject
+        assertEquals("FOLDER-1", record["parent"]!!.jsonObject["recordName"]!!.jsonPrimitive.content)
+        assertEquals("true", record["createShortGUID"]!!.jsonPrimitive.content)
+        val folder = record["fields"]!!.jsonObject["Folder"]!!.jsonObject["value"]!!.jsonObject
+        assertEquals("FOLDER-1", folder["recordName"]!!.jsonPrimitive.content)
+        assertEquals("_alex", folder["zoneID"]!!.jsonObject["ownerRecordName"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun notesSharedWithMeAreNeverMovedOrDeleted() = runTest {
+        dao.upsertNotes(listOf(cachedNote(zoneOwner = "_alex")))
+        val move = PendingOpEntity(PendingOpEntity.MOVE, "NOTE", folderRecordName = "work", createdAt = 1)
+        dao.upsertOp(move)
+
+        writer.pushOp(move)
+
+        assertTrue(requests.isEmpty())
+        assertTrue(dao.ops.values.single().error != null)
+    }
+
+    @Test
+    fun pendingEditsToSharedNotesAreRebasedOntoWhatArrives() = runTest {
+        val base = paragraphs(title, "buy milk" to ParagraphKind.Checklist)
+        val theirs = paragraphs(title, "buy milk" to ParagraphKind.Checklist, "bread" to ParagraphKind.Checklist)
+        val note = cachedNote(zoneOwner = "_alex", textData = serverNote(theirs))
+        dao.upsertNotes(listOf(note))
+        pend(base, paragraphs(title, "buy oat milk" to ParagraphKind.Checklist))
+
+        writer.rebaseOnServerChanges(listOf(note))
+
+        val pending = dao.pending["NOTE"]!!
+        assertTrue(dev.rortega.orchardnotes.notes.doc.NoteFormat.formatsEqual(theirs, ParagraphMerge.withOffsets(writer.decodeParagraphs(pending.baseJson!!))))
+        assertEquals(listOf("Groceries", "buy oat milk", "bread"), writer.decodeParagraphs(pending.desiredJson).map { it.text })
     }
 }

@@ -25,6 +25,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -249,11 +250,13 @@ private fun NoteRowItem(
     val note = row.summary
     var menuOpen by remember { mutableStateOf(false) }
     val inTrash = note.folderRecordName == dev.rortega.orchardnotes.data.SpecialFolders.TRASH
+    // Only the person who shared a note can move or delete it.
+    val canOrganize = row.sharing?.sharedWithMe != true
     Box(
         modifier = modifier
             .fillMaxWidth()
             .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest)
-            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
+            .combinedClickable(onClick = onClick, onLongClick = if (canOrganize) ({ menuOpen = true }) else null)
             .padding(horizontal = 16.dp, vertical = 11.dp),
     ) {
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -289,6 +292,14 @@ private fun NoteRowItem(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
+                if (row.sharing != null) {
+                    Icon(
+                        Icons.Outlined.People,
+                        contentDescription = "Shared",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(row.dateLabel, style = MaterialTheme.typography.bodyMedium)
@@ -318,6 +329,12 @@ private fun NoteRowItem(
                         modifier = Modifier.size(14.dp),
                     )
                     Text(folder, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            // A note shared on its own has no folder here: say whose it is instead.
+            if (row.folderTitle == null && row.sharing?.sharedWithMe == true) {
+                row.sharing.ownerName?.let { owner ->
+                    Text("From $owner", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

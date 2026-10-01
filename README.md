@@ -18,8 +18,10 @@ An Android app for reading and editing your Apple Notes through your iCloud acco
 - **Faithful rendering.** Title, heading, subheading, body and monospaced paragraphs, bulleted, dashed and numbered lists, checklists, block quotes, bold, italic, underline, strikethrough, highlights, colors and links. Photos, drawings and scans show inline.
 - **Editing.** Tap a note to edit it in place, with a formatting toolbar and checklist circles you can tick. Changes save as you type.
 - **Works offline.** Every edit, new note, move, delete and new folder is saved on the device first and queued. The queue pushes as soon as iCloud is reachable, even if the app was closed (WorkManager with a network constraint).
-- **Safe with other devices.** Edits are written as CRDT operations, the same way Apple's clients write them, so they merge on your iPhone, iPad and Mac. If a note changed elsewhere while you were offline, the two versions are merged by paragraph. If the same paragraph changed on both sides, your version is saved as a separate note instead of overwriting.
+- **Safe with other devices.** Edits are written as CRDT operations, the same way Apple's clients write them, so they merge on your iPhone, iPad and Mac. If a note changed elsewhere while you were offline, the two versions are merged by paragraph. If the same paragraph changed on both sides, your version is saved as a separate note instead of overwriting (shared notes merge character by character instead; see below).
 - **Organize.** Move notes between folders, delete to Recently Deleted (with Undo), recover, delete permanently, and create folders.
+- **Shared notes.** Notes and folders other people shared with you show up natively: in a **Shared** list (with everything you share, too), as shared folders marked with whose they are, and with a "Shared by" / "Shared with" line on each note. Edit them, tick their checklists and add notes to shared folders when the owner gave you edit access; view-only shares open read-only.
+- **Live collaboration.** While a shared note is open, Orchard checks iCloud every few seconds, and other people's edits appear in place, even mid-sentence while you're typing: concurrent edits are merged character by character, the way Apple's CRDT merges them, so nobody's text is lost or duplicated and your cursor stays put. Everything else refreshes every 30 seconds while the app is open.
 - **Adaptive layout.** One pane on phones, list and note side by side on mid-size screens, and folders, list and note on tablets and unfolded foldables. Light and dark themes.
 - **Escape hatch.** Anything not handled natively (locked notes, tables, adding attachments) opens in iCloud.com's Notes app inside Orchard, using the same session.
 
@@ -48,9 +50,9 @@ To install on a phone: enable *Developer options* (Settings > About phone > Soft
 | Layer | Where | What it does |
 |---|---|---|
 | Sign-in | `auth/`, `ui/signin/` | Hosts www.icloud.com in a WebView. A script injected only into that origin reads the web client's own `accountLogin` / `validate` responses to detect a completed sign-in (2FA included). The WebView cookie store is shared with the HTTP client. |
-| CloudKit | `cloudkit/` | `changes/zone`, `records/lookup` and `records/modify` on the `com.apple.notes` container, with the same parameters as the web client. |
-| Cache and sync | `data/` | Room cache of notes and folders, incremental sync tokens, pending edits and operations, and the push pipeline (`NoteWriter`). |
-| Note format | `notes/` | Order-preserving protobuf codec; Apple's `topotext` CRDT model, edit engine, formatting reconciler; record field builders; paragraph-level three-way merge. |
+| CloudKit | `cloudkit/` | `changes/zone`, `records/lookup` and `records/modify` on the `com.apple.notes` container, with the same parameters as the web client. Your own notes are in the private database's Notes zone; notes shared with you are in one zone per sharer in the shared database (`shared/changes/database` lists them). |
+| Cache and sync | `data/` | Room cache of notes, folders and shares, tagged with the zone they came from; incremental sync tokens per zone; pending edits and operations, and the push pipeline (`NoteWriter`). Edits waiting to be pushed are rebased onto newer versions as they arrive, and open shared notes' zones are polled while the app is in the foreground. |
+| Note format | `notes/` | Order-preserving protobuf codec; Apple's `topotext` CRDT model, edit engine, formatting reconciler; record field builders; paragraph-level three-way merge, and a character-level merge that never conflicts (`LiveMerge`) for notes several people edit. |
 | UI | `ui/` | Compose: browser (folders, list, adaptive layout), note view and editor, iCloud.com fallback. |
 
 Every write to an existing note goes through these gates: fetch a fresh copy, require the server's document to re-encode **byte for byte** through Orchard's model, refuse edits that would touch embedded objects, apply the change as CRDT operations, then decode the rebuilt document independently and compare its text, formatting and attachments before uploading with optimistic concurrency (`recordChangeTag`). Notes that fail a gate stay readable, and the app explains why they're read-only.
@@ -60,7 +62,10 @@ Every write to an existing note goes through these gates: fetch a fresh copy, re
 - Tables, sketches and scanned documents can't be edited here (they display; tables as a card).
 - Attachments can't be added. Existing ones are kept intact around your edits.
 - Locked (password-protected) notes open only through the iCloud.com fallback.
-- Notes that other people shared with you aren't listed (they live in a separate shared database). Notes you shared with others are listed and editable.
+- Shares are accepted, created and managed on an Apple device or iCloud.com: Orchard shows what's already shared but can't send or accept invitations, or change who has access.
+- Notes shared with you can't be moved or deleted here (only their owner can), and your notes can't be moved into someone else's shared folder.
+- Other people's edits arrive by polling (every 4 seconds for an open shared note), not push notifications, and who-edited-what highlights aren't shown.
+- Editing a note shared with you on its own (rather than inside a shared folder) uses the same requests as edits in shared folders, but hasn't been checked against a live share of that kind yet. If iCloud refuses, the note says so and stays as it is.
 - Pinning, renaming or deleting folders, and hashtags/mentions as tokens aren't supported yet.
 - Very large notes whose text is stored as a separate asset are read-only.
 

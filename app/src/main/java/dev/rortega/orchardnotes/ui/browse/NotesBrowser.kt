@@ -76,10 +76,11 @@ fun NotesBrowser(session: SessionState.SignedIn, onSignInAgain: () -> Unit) {
     val query by viewModel.query.collectAsStateWithLifecycle()
     val syncStatus by repository.syncStatus.collectAsStateWithLifecycle()
 
-    // Refresh whenever the app comes to the foreground.
+    // Refresh whenever the app comes to the foreground, and keep syncing while it's there.
     LifecycleStartEffect(session.account.dsid, session.expired) {
         if (!session.expired) repository.requestSync()
-        onStopOrDispose { }
+        repository.setForeground(true)
+        onStopOrDispose { repository.setForeground(false) }
     }
 
     val signOut: () -> Unit = { scope.launch { container.sessionManager.signOut() } }

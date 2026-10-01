@@ -1,24 +1,35 @@
 package dev.rortega.orchardnotes.data
 
 import dev.rortega.orchardnotes.auth.SessionManager
+import dev.rortega.orchardnotes.auth.SessionState
+import dev.rortega.orchardnotes.cloudkit.NotesZone
 import dev.rortega.orchardnotes.cloudkit.SessionExpiredException
+import dev.rortega.orchardnotes.notes.LiveMerge
 import dev.rortega.orchardnotes.notes.NoteFields
 import dev.rortega.orchardnotes.notes.ParagraphMerge
 import dev.rortega.orchardnotes.notes.doc.FormatParagraph
 import dev.rortega.orchardnotes.notes.doc.NoteContent
+import dev.rortega.orchardnotes.notes.doc.NoteFormat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.Base64
+
+/** What [NotesRepository.saveDraft] stored: the content, and its [LocalClock] time. */
+data class SavedDraft(val paragraphs: List<FormatParagraph>, val savedAt: Long)
 
 data class SyncStatus(
     val syncing: Boolean = false,
@@ -35,6 +46,10 @@ data class SyncStatus(
 /**
  * The app's single source of truth for notes: the local cache, kept fresh from iCloud,
  * plus local edits that are saved immediately and pushed when iCloud is reachable.
+ *
+ * While the app is on screen it keeps syncing: every [FULL_SYNC_INTERVAL_MS], and every
+ * [LIVE_INTERVAL_MS] for the zones of open shared notes, so other people's edits show up
+ * live. Pulls and pushes never overlap, so a pull can't see a push half-applied.
  */
 class NotesRepository(
     private val dao: NotesDao,
@@ -49,13 +64,24 @@ class NotesRepository(
     val syncStatus: StateFlow<SyncStatus> = _syncStatus.asStateFlow()
     private var syncJob: Job? = null
     private var pushJob: Job? = null
+
+    /** Held while pushing or applying pulled changes. */
     private val pushMutex = Mutex()
-    private val saveMutex = Mutex()
+
+    private val foreground = MutableStateFlow(false)
+
+    /** Zones of notes open on screen that others may be editing, with how many watch each. */
+    private val watchedZones = MutableStateFlow<Map<NotesZone, Int>>(emptyMap())
 
     init {
         scope.launch {
             combine(dao.observePendingCount(), dao.observeOpCount()) { edits, ops -> edits + ops }
                 .collect { count -> _syncStatus.update { it.copy(pendingCount = count) } }
+        }
+        scope.launch {
+            combine(foreground, watchedZones) { visible, zones -> if (visible) zones.keys else null }
+                .distinctUntilChanged()
+                .collectLatest { zones -> if (zones != null) keepLive(zones) }
         }
     }
 
@@ -66,6 +92,10 @@ class NotesRepository(
     fun search(query: String): Flow<List<NoteSummary>> = dao.observeSearch(query, SpecialFolders.TRASH)
     fun note(recordName: String): Flow<NoteEntity?> = dao.observeNote(recordName)
     fun pendingEdit(recordName: String): Flow<PendingEditEntity?> = dao.observePending(recordName)
+    fun sharingIndex(): Flow<SharingIndex> = combine(dao.observeFolders(), dao.observeShares()) { folders, shares -> SharingIndex(folders, shares) }
+
+    /** The zone to keep live while [note] is open: its zone, if others may be editing it too. */
+    suspend fun liveZoneOf(note: NoteEntity): NotesZone? = if (writer.isCollaborative(note)) NotesZone(note.zoneOwner) else null
     suspend fun folderOf(recordName: String): String? = dao.getNote(recordName)?.folderRecordName
 
     fun decodeParagraphs(json: String): List<FormatParagraph> = ParagraphMerge.withOffsets(writer.decodeParagraphs(json))
@@ -80,12 +110,13 @@ class NotesRepository(
         return scope.launch { syncNow() }.also { syncJob = it }
     }
 
-    suspend fun syncNow() {
+    /** [quiet]: a background sync, which doesn't show as refreshing. */
+    suspend fun syncNow(quiet: Boolean = false) {
         if (sessionManager.account == null) return
-        _syncStatus.update { it.copy(syncing = true, error = null) }
+        _syncStatus.update { it.copy(syncing = !quiet, error = null) }
         pushPending()
         try {
-            sync.sync()
+            pushMutex.withLock { sync.sync() }
             _syncStatus.update { it.copy(syncing = false, offline = false, lastSyncedAt = System.currentTimeMillis()) }
         } catch (e: SessionExpiredException) {
             sessionManager.markExpired()
@@ -97,23 +128,98 @@ class NotesRepository(
         }
     }
 
+    // --- live sync -------------------------------------------------------------------
+
+    /** The app came to (or left) the screen; background syncing only runs while it's there. */
+    fun setForeground(visible: Boolean) {
+        foreground.value = visible
+    }
+
+    /**
+     * Keeps [zone] closely in sync while a note from it is open, since others may be editing
+     * it. Returns the function that stops watching.
+     */
+    fun watch(zone: NotesZone): () -> Unit {
+        watchedZones.update { it + (zone to (it[zone] ?: 0) + 1) }
+        var stopped = false
+        return {
+            if (!stopped) {
+                stopped = true
+                watchedZones.update { current ->
+                    val count = (current[zone] ?: 1) - 1
+                    if (count <= 0) current - zone else current + (zone to count)
+                }
+            }
+        }
+    }
+
+    private suspend fun keepLive(zones: Set<NotesZone>) {
+        var failures = 0
+        var sinceFullSync = 0L
+        while (true) {
+            val interval = if (zones.isEmpty()) FULL_SYNC_INTERVAL_MS else LIVE_INTERVAL_MS
+            // Back off while iCloud can't be reached (up to 16x).
+            delay(interval shl failures.coerceAtMost(MAX_BACKOFF_SHIFT))
+            val session = sessionManager.state.value
+            if (session !is SessionState.SignedIn || session.expired) continue
+            sinceFullSync += interval
+            val ok = if (zones.isEmpty() || sinceFullSync >= FULL_SYNC_INTERVAL_MS) {
+                sinceFullSync = 0
+                syncNow(quiet = true)
+                _syncStatus.value.let { it.error == null && !it.offline }
+            } else {
+                refreshZones(zones)
+            }
+            failures = if (ok) 0 else failures + 1
+        }
+    }
+
+    /** Pushes, then pulls just the [zones] of open notes. */
+    private suspend fun refreshZones(zones: Set<NotesZone>): Boolean {
+        pushPending()
+        return try {
+            pushMutex.withLock { zones.forEach { sync.syncZone(it) } }
+            _syncStatus.update { it.copy(offline = false) }
+            true
+        } catch (e: SessionExpiredException) {
+            sessionManager.markExpired()
+            false
+        } catch (e: java.io.IOException) {
+            _syncStatus.update { it.copy(offline = true) }
+            false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     // --- local edits --------------------------------------------------------------
 
     /**
      * Saves [desired] as the note's new content, locally and immediately; the push to
-     * iCloud follows shortly. [base] is the content the editor started from; it is only
-     * recorded for the first unsynced edit, so merges always see the true starting point.
+     * iCloud follows shortly. [base] is the content [desired] was edited from: if the note
+     * has changed since (someone's edit arrived), the edit is merged into what it is now.
+     * Returns what was saved, which includes any such merged-in changes.
      */
     suspend fun saveDraft(
         recordName: String,
         base: List<FormatParagraph>?,
         desired: List<FormatParagraph>,
         newNoteFolder: String? = null,
-    ) {
+    ): SavedDraft = writer.pendingLock.withLock {
         val existing = dao.getPending(recordName)
-        val text = desired.joinToString("\n") { it.text }
-        val now = System.currentTimeMillis()
+        val note = dao.getNote(recordName)
         val isNew = existing?.isNew ?: (newNoteFolder != null)
+        val server = if (isNew) null else note?.let(writer::serverParagraphs)
+        val current = existing?.let { ParagraphMerge.withOffsets(writer.decodeParagraphs(it.desiredJson)) } ?: server
+        val edited = ParagraphMerge.withOffsets(desired)
+        val target = if (base == null || current == null || NoteFormat.formatsEqual(ParagraphMerge.withOffsets(base), current)) {
+            edited
+        } else {
+            // The editor catching up with what arrived while it was typing: never a real conflict.
+            LiveMerge.merge(ParagraphMerge.withOffsets(base), edited, current).paragraphs
+        }
+        val text = target.joinToString("\n") { it.text }
+        val now = LocalClock.next()
         val title = NoteFields.title(text).trim()
         val snippet = NoteFields.snippet(text)
         dao.upsertPending(
@@ -121,8 +227,9 @@ class NotesRepository(
                 recordName = recordName,
                 isNew = isNew,
                 folderRecordName = existing?.folderRecordName ?: newNoteFolder,
-                baseJson = existing?.baseJson ?: if (isNew) null else base?.let(writer::encodeParagraphs),
-                desiredJson = writer.encodeParagraphs(desired),
+                // The server version the edit applies to: what it was merged into, else what it started from.
+                baseJson = existing?.baseJson ?: if (isNew) null else (server ?: base)?.let(writer::encodeParagraphs),
+                desiredJson = writer.encodeParagraphs(target),
                 title = title,
                 snippet = snippet,
                 plainText = text,
@@ -131,12 +238,13 @@ class NotesRepository(
                 blocked = existing?.blocked ?: false,
             ),
         )
-        if (isNew && dao.getNote(recordName) == null) {
+        if (isNew && note == null) {
+            val folder = newNoteFolder ?: SpecialFolders.DEFAULT
             dao.upsertNotes(
                 listOf(
                     NoteEntity(
                         recordName = recordName,
-                        folderRecordName = newNoteFolder ?: SpecialFolders.DEFAULT,
+                        folderRecordName = folder,
                         title = title,
                         snippet = snippet,
                         plainText = text,
@@ -148,17 +256,37 @@ class NotesRepository(
                         firstAttachmentUti = null,
                         isLocked = false,
                         bodyUnavailable = false,
+                        // A new note in a folder shared with the account is created in its sharer's zone.
+                        zoneOwner = dao.getFolder(folder)?.zoneOwner,
+                        syncedAt = now,
                     ),
                 ),
             )
         }
         dao.overlayPendingEdits()
         schedulePush()
+        SavedDraft(target, now)
     }
 
-    /** [saveDraft] on the app scope, for saves that must outlive the screen that started them. */
-    fun saveDraftInBackground(recordName: String, base: List<FormatParagraph>?, desired: List<FormatParagraph>, newNoteFolder: String?) {
-        scope.launch { saveMutex.withLock { saveDraft(recordName, base, desired, newNoteFolder) } }
+    /**
+     * [saveDraft] on the app scope, once [after] (the editor's previous save) is done: saves
+     * land in order, and complete even if the screen that started them goes away.
+     */
+    fun saveDraftAsync(
+        recordName: String,
+        base: List<FormatParagraph>?,
+        desired: List<FormatParagraph>,
+        newNoteFolder: String?,
+        after: Deferred<*>? = null,
+    ): Deferred<SavedDraft> = scope.async {
+        after?.let { previous -> runCatching { previous.await() } }
+        saveDraft(recordName, base, desired, newNoteFolder)
+    }
+
+    /** Pushes a local edit that couldn't be saved once more (after an update fixed the cause, say). */
+    suspend fun retryPending(recordName: String) {
+        dao.markPending(recordName, error = null, blocked = false)
+        schedulePush(delayMs = 0)
     }
 
     /** Drops a local edit; the note goes back to what iCloud has. */
@@ -173,9 +301,17 @@ class NotesRepository(
         val serverText = note.textData?.let { data ->
             runCatching { NoteContent.decode(Base64.getDecoder().decode(data)).text }.getOrNull()
         }
-        if (serverText != null) {
-            dao.upsertNotes(listOf(note.copy(title = NoteFields.title(serverText).trim(), snippet = NoteFields.snippet(serverText), plainText = serverText)))
-        }
+        // Restamped: iCloud's version is current again, newer than the edit just dropped.
+        val restored = note.copy(syncedAt = LocalClock.next())
+        dao.upsertNotes(
+            listOf(
+                if (serverText == null) {
+                    restored
+                } else {
+                    restored.copy(title = NoteFields.title(serverText).trim(), snippet = NoteFields.snippet(serverText), plainText = serverText)
+                },
+            ),
+        )
     }
 
     /** Turns a local edit that can't be applied to its note into a brand-new note. Returns its record name. */
@@ -317,5 +453,8 @@ class NotesRepository(
 
     private companion object {
         const val PUSH_DEBOUNCE_MS = 1_500L
+        const val LIVE_INTERVAL_MS = 4_000L
+        const val FULL_SYNC_INTERVAL_MS = 30_000L
+        const val MAX_BACKOFF_SHIFT = 4
     }
 }
