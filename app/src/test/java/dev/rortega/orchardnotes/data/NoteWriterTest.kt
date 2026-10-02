@@ -412,6 +412,20 @@ class NoteWriterTest {
     }
 
     @Test
+    fun aChecklistItemJustStartedAtTheEndSavesAsAnEmptyLine() = runTest {
+        val base = paragraphs(title, eggs)
+        serverBody = serverNote(base)
+        // Return after the last item, then a pause: the new item has no text yet.
+        pend(base, paragraphs(title, eggs, "" to ParagraphKind.Checklist))
+
+        assertEquals(PushOutcome.Pushed, writer.push("NOTE"))
+
+        // An empty last line can't carry a paragraph style, so it's stored as a plain one.
+        assertEquals(listOf(title, eggs, "" to ParagraphKind.Body), kinds(uploaded().second))
+        assertNull(dao.pending["NOTE"])
+    }
+
+    @Test
     fun aSharedNoteICanOnlyViewBlocksInsteadOfRetrying() = runTest {
         val base = paragraphs(title, eggs)
         serverBody = serverNote(base)

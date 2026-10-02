@@ -79,6 +79,23 @@ class LiveMergeTest {
     }
 
     @Test
+    fun anItemJustStartedAtTheEndSurvivesItsSavedVersionComingBack() {
+        // Saved, the new empty item is a plain empty line (it has nothing to carry its style).
+        val base = doc(p("milk", ParagraphKind.Checklist), p("", ParagraphKind.Checklist))
+        val theirs = doc(p("Shopping"), p("milk", ParagraphKind.Checklist), p(""))
+        val result = merged(base, base, theirs)
+        assertEquals(listOf(ParagraphKind.Body, ParagraphKind.Checklist, ParagraphKind.Checklist), result.map { it.kind })
+    }
+
+    @Test
+    fun bothSidesDeletingTheLastEmptyLineKeepTheText() {
+        val base = lines("Groceries", "")
+        val result = merged(base, lines("Groceries list"), lines("Groceries"))
+        assertEquals("Groceries list", text(result))
+        assertEquals(1, result.size)
+    }
+
+    @Test
     fun checklistTickedElsewhereWhileTheItemIsBeingRetyped() {
         val base = doc(p("buy milk", ParagraphKind.Checklist))
         val ours = doc(p("buy oat milk", ParagraphKind.Checklist))

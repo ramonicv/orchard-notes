@@ -3,6 +3,7 @@ package dev.rortega.orchardnotes.notes
 import dev.rortega.orchardnotes.notes.doc.FormatParagraph
 import dev.rortega.orchardnotes.notes.doc.InlineSpan
 import dev.rortega.orchardnotes.notes.doc.InlineStyle
+import dev.rortega.orchardnotes.notes.doc.NoteFormat
 import dev.rortega.orchardnotes.notes.doc.ParagraphKind
 
 /**
@@ -25,7 +26,9 @@ object LiveMerge {
     fun merge(base: List<FormatParagraph>, ours: List<FormatParagraph>, theirs: List<FormatParagraph>): Result {
         val b = Flat.of(base)
         val o = Flat.of(ours)
-        val t = Flat.of(theirs)
+        // Theirs is usually a stored version, which can't keep an empty last line's style:
+        // losing it there isn't a change (an item just started at the end of a list stays).
+        val t = Flat.of(NoteFormat.keepEmptyLastLineStyle(from = base, onto = theirs))
         val toOurs = Alignment.align(b.text, o.text)
         val toTheirs = Alignment.align(b.text, t.text)
         val oursInserts = insertionsByGap(toOurs, o.text.length, b.text.length)
@@ -73,8 +76,14 @@ object LiveMerge {
             emit(b.text[gap], style, paragraph)
         }
         oursOffsets[o.text.length] = out.length
+        // Every version ends with a virtual newline, so the output must too. Where the base ends
+        // with a newline of its own, the two can align either way round: if each side kept a
+        // different one, both are gone and the last paragraph would be lost with them.
+        if (out.lastOrNull() != '\n') {
+            val ourEnd = o.attributesAt(o.text.lastIndex)
+            emit('\n', InlineStyle.Plain, if (ourEnd != b.attributesAt(b.text.lastIndex)) ourEnd else t.attributesAt(t.text.lastIndex))
+        }
 
-        // Every version ends with a virtual newline that always survives, so the output does too.
         val paragraphs = mutableListOf<FormatParagraph>()
         var start = 0
         for (i in out.indices) {
