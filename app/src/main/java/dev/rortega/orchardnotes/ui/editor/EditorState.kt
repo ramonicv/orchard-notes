@@ -7,6 +7,7 @@ import dev.rortega.orchardnotes.notes.doc.InlineStyle
 import dev.rortega.orchardnotes.notes.doc.NoteFormat
 import dev.rortega.orchardnotes.notes.doc.OBJECT_REPLACEMENT_CHARACTER
 import dev.rortega.orchardnotes.notes.doc.ParagraphKind
+import dev.rortega.orchardnotes.notes.doc.Splice
 import dev.rortega.orchardnotes.notes.doc.TextDiff
 
 /** Paragraph-level attributes of one line. */
@@ -84,13 +85,14 @@ data class EditorState(
      */
     fun applyTextChange(newText: String, cursorAfter: Int): Pair<EditorState, String?> {
         if (newText == text) return this to null
-        val splice = TextDiff.computeSplice(text, newText)
+        val splice = spliceTo(newText, cursorAfter)
         val deleted = text.substring(splice.start, splice.start + splice.deleteLength)
         // Attachments are tied to their placeholder; they can't be removed or created here.
         if (OBJECT_REPLACEMENT_CHARACTER in deleted) return this to text
         val inserted = splice.insertText.replace(OBJECT_REPLACEMENT_CHARACTER.toString(), "")
         if (inserted != splice.insertText) {
-            return applyTextChange(text.substring(0, splice.start) + inserted + text.substring(splice.start + splice.deleteLength), cursorAfter)
+            val cursor = cursorAfter - (splice.insertText.length - inserted.length)
+            return applyTextChange(text.substring(0, splice.start) + inserted + text.substring(splice.start + splice.deleteLength), cursor)
                 .let { (state, _) -> state to state.text }
         }
 
@@ -124,6 +126,28 @@ data class EditorState(
         val newRuns = spliceRuns(runs, splice.start, splice.deleteLength, inserted.length, typing)
         val state = EditorState(newText.takeIf { inserted == splice.insertText } ?: text, newLines, newRuns, typingStyle = null)
         return state to null
+    }
+
+    /**
+     * The edit that turned [text] into [newText]. Next to a repeated character the same edit
+     * fits in more than one place: Return at the end of "eggs" in "eggs\n" gives the same
+     * text as Return at the start of the line below, and backspace on an empty line can read
+     * as deleting the newline after it. Which line the edit belongs to decides which line's
+     * style is kept, so the cursor, which ends just after what was typed (or where text was
+     * deleted), says where it was made.
+     */
+    private fun spliceTo(newText: String, cursorAfter: Int): Splice {
+        // As late as the edit fits; it fits earlier for as long as the text after it still matches.
+        val splice = TextDiff.computeSplice(text, newText)
+        var commonSuffix = 0
+        val maxSuffix = minOf(text.length, newText.length)
+        while (commonSuffix < maxSuffix && text[text.length - 1 - commonSuffix] == newText[newText.length - 1 - commonSuffix]) commonSuffix++
+        val earliest = maxOf(0, text.length - splice.deleteLength - commonSuffix)
+        val start = (cursorAfter - splice.insertText.length).coerceIn(earliest, splice.start)
+        val end = start + splice.deleteLength
+        // Never between the two halves of a surrogate pair.
+        if (start == splice.start || text.getOrNull(start)?.isLowSurrogate() == true || text.getOrNull(end)?.isLowSurrogate() == true) return splice
+        return Splice(start, splice.deleteLength, newText.substring(start, start + splice.insertText.length))
     }
 
     /** Style for a line created by pressing Enter at the end of [line]. */
