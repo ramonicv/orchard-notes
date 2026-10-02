@@ -22,6 +22,10 @@ class EditorStateTest {
     private fun EditorState.type(at: Int, insert: String): Pair<EditorState, String?> =
         applyTextChange(text.substring(0, at) + insert + text.substring(at), at + insert.length)
 
+    /** Presses backspace with the cursor at [at]. */
+    private fun EditorState.backspace(at: Int): Pair<EditorState, String?> =
+        applyTextChange(text.removeRange(at - 1, at), at - 1)
+
     private fun EditorState.kinds() = toParagraphs().map { it.text to it.kind }
 
     @Test
@@ -57,6 +61,32 @@ class EditorStateTest {
         val (next, adjusted) = start.type(5, "\n")
         assertEquals(start.text, adjusted)
         assertEquals(listOf("eggs" to ParagraphKind.Checklist, "" to ParagraphKind.Body), next.kinds())
+    }
+
+    @Test
+    fun returnAfterTheLastItemOfAListContinuesItWhenALineFollows() {
+        // A list saved with Return after its last item comes back followed by a plain empty line.
+        val (next, _) = state(p("milk", ParagraphKind.Checklist), p("eggs", ParagraphKind.Checklist), p("")).type(9, "\n")
+        assertEquals(listOf("milk" to ParagraphKind.Checklist, "eggs" to ParagraphKind.Checklist, "" to ParagraphKind.Checklist, "" to ParagraphKind.Body), next.kinds())
+        val (beforeText, _) = state(p("milk", ParagraphKind.Checklist), p("eggs", ParagraphKind.Checklist), p("Notes")).type(9, "\n")
+        assertEquals(listOf("milk" to ParagraphKind.Checklist, "eggs" to ParagraphKind.Checklist, "" to ParagraphKind.Checklist, "Notes" to ParagraphKind.Body), beforeText.kinds())
+    }
+
+    @Test
+    fun returnOnAnEmptyLastItemLeavesTheListWhenALineFollows() {
+        val start = state(p("milk", ParagraphKind.Checklist), p("", ParagraphKind.Checklist), p(""))
+        val (next, adjusted) = start.type(5, "\n")
+        assertEquals(start.text, adjusted)
+        assertEquals(listOf("milk" to ParagraphKind.Checklist, "" to ParagraphKind.Body, "" to ParagraphKind.Body), next.kinds())
+    }
+
+    @Test
+    fun backspaceOnAnEmptiedLastItemRemovesItAndNotTheLineBelow() {
+        // "eggs" deleted from the last item, then backspace again to remove its checkbox.
+        val (next, _) = state(p("milk", ParagraphKind.Checklist), p("", ParagraphKind.Checklist), p("")).backspace(5)
+        assertEquals(listOf("milk" to ParagraphKind.Checklist, "" to ParagraphKind.Body), next.kinds())
+        val (beforeText, _) = state(p("milk", ParagraphKind.Checklist), p("", ParagraphKind.Checklist), p("Notes")).backspace(5)
+        assertEquals(listOf("milk" to ParagraphKind.Checklist, "Notes" to ParagraphKind.Body), beforeText.kinds())
     }
 
     @Test
